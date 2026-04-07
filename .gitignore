@@ -31,3 +31,6 @@ dist-ssr
 # Firebase
 .firebase/
 functions/node_modules/
+
+
+.claude
