@@ -1,6 +1,6 @@
 # ALFM Fund Tracker
 
-Personal investment tracker for **ALFM Global Multi-Asset Income Fund (PHP)** — a BlackRock-backed mutual fund distributed by BPI in the Philippines.
+Personal investment tracker for **ALFM Global Multi-Asset Income Fund (PHP)**:a BlackRock-backed mutual fund distributed by BPI in the Philippines.
 
 ## What it does
 
@@ -63,7 +63,7 @@ The signal engine is a pure function that takes today's NAVPU and context data a
 | NO_SECOND_BUY | 1 buy done, no exception | 0 |
 | MONTHLY_CAP | 2 buys done this month | 0 |
 
-Tier boundaries are **dynamic** — computed from the 75th/60th/45th/30th percentiles of the rolling 90-day NAVPU window. See `SIGNAL_ENGINE.md` for full documentation.
+Tier boundaries are **dynamic**:computed from the 75th/60th/45th/30th percentiles of the rolling 90-day NAVPU window. See `SIGNAL_ENGINE.md` for full documentation.
 
 ## Cloud Functions
 
