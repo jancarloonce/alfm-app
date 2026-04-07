@@ -41,7 +41,7 @@ export default function PositionCard({ position, todayNavpu, monthlyBuyCount }) 
   const isGain = unrealizedGain >= 0
 
   // Monthly buy progress
-  const buyDots = [0, 1, 2].map((i) => ({
+  const buyDots = [0, 1].map((i) => ({
     filled: i < monthlyBuyCount,
     capped: monthlyBuyCount >= 2,
   }))
@@ -50,7 +50,7 @@ export default function PositionCard({ position, todayNavpu, monthlyBuyCount }) 
     <div className="card h-full">
       <div className="flex items-center justify-between mb-4">
         <p className="label">Your Position</p>
-        <div className="flex items-center gap-1.5" title={`${monthlyBuyCount}/2 buys this month`}>
+        <div className="flex items-center gap-1.5" title={`${monthlyBuyCount}/2 buys this month`} >
           {buyDots.map((dot, i) => (
             <div
               key={i}
