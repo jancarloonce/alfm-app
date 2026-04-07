@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node:*)",
+      "Bash(git -C \"C:/Users/janca/OneDrive/Desktop/codebase/alfm-app\" log --oneline -10)",
+      "Bash(git -C \"C:/Users/janca/OneDrive/Desktop/codebase/alfm-app\" status)",
+      "Bash(xargs ls:*)",
+      "WebFetch(domain:affinitycorp.net)",
+      "Bash(grep -o \"\"navDate\"\":\"\"[^\"\"]*\"\",\"\"navpu\"\":[0-9.]* C:/Users/janca/.claude/projects/C--Users-janca-OneDrive-Desktop-codebase-alfm-app/c10f16ca-09fb-408d-85de-ba7a20976002.jsonl)",
+      "Bash(grep -o navpu.*navDate C:/Users/janca/.claude/projects/C--Users-janca-OneDrive-Desktop-codebase-alfm-app/c10f16ca-09fb-408d-85de-ba7a20976002.jsonl)",
+      "Bash(curl -s \"https://affinitycorp.net/api/funds/alfm_gmif_peso?query=%7B%22select%22%3A%5B%22navpuHistory%22%5D%2C%22limit%22%3A100%2C%22offset%22%3A0%7D\" -H \"User-Agent: Mozilla/5.0\" --max-time 15)",
+      "Bash(python3 -c \":*)"
+    ]
+  }
+}
