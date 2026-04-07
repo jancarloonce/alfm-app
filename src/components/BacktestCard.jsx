@@ -203,6 +203,35 @@ export default function BacktestCard() {
         </div>
       </div>
 
+      {/* Buy timing distribution */}
+      {summary.buyDayDistribution && (
+        <div className="border-t border-slate-700 pt-3 mb-4">
+          <p className="label text-xs mb-1">Buy Timing Distribution</p>
+          <p className="text-slate-600 text-xs mb-2">Which week of the month do actionable signals fire?</p>
+          <div className="space-y-1.5">
+            {Object.entries(summary.buyDayDistribution).map(([week, count]) => {
+              const total = Object.values(summary.buyDayDistribution).reduce((a, b) => a + b, 0)
+              const pct = total > 0 ? (count / total) * 100 : 0
+              const isHeavy = pct > 35
+              return (
+                <div key={week} className="flex items-center gap-2">
+                  <span className="text-slate-400 text-xs w-28 shrink-0">{week}</span>
+                  <div className="flex-1 bg-slate-700 rounded-full h-2">
+                    <div
+                      className={`h-2 rounded-full ${isHeavy ? 'bg-amber-400' : 'bg-slate-400'}`}
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                  <span className={`text-xs w-10 text-right ${isHeavy ? 'text-amber-400 font-bold' : 'text-slate-400'}`}>
+                    {count} ({pct.toFixed(0)}%)
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Detailed results toggle */}
       <button
         onClick={() => setShowTable((v) => !v)}

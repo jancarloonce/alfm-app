@@ -184,6 +184,18 @@ async function runBacktest(db) {
     noBuyTotal: noBuys.length,
     // Signal distribution
     signalBreakdown,
+    // Day-of-month distribution of actionable signals (4 weekly buckets)
+    buyDayDistribution: (() => {
+      const buckets = { 'Week 1 (1-7)': 0, 'Week 2 (8-14)': 0, 'Week 3 (15-21)': 0, 'Week 4 (22+)': 0 }
+      for (const r of results.filter((r) => r.isActionable)) {
+        const day = parseInt(r.date.slice(8, 10))
+        if (day <= 7) buckets['Week 1 (1-7)']++
+        else if (day <= 14) buckets['Week 2 (8-14)']++
+        else if (day <= 21) buckets['Week 3 (15-21)']++
+        else buckets['Week 4 (22+)']++
+      }
+      return buckets
+    })(),
     bestSignal: bestSignal ? { date: bestSignal.date, signal: bestSignal.signal, return3d: bestSignal.return3d } : null,
     worstSignal: worstSignal ? { date: worstSignal.date, signal: worstSignal.signal, return3d: worstSignal.return3d } : null,
     backtestPeriod: {
