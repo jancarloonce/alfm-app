@@ -165,13 +165,18 @@ export default function DividendCard({ todayStr, buys = [] }) {
               {[...pastDividends].reverse().map((r) => {
                 const earned = r.earned ?? r.units * r.divPerUnit
                 return (
-                  <div key={r.date} className="grid grid-cols-4 items-center bg-slate-700/20 rounded px-2 py-1.5 text-xs">
-                    <span className="text-slate-300 font-medium">{r.month}</span>
+                  <div key={r.date} className={`grid grid-cols-4 items-center rounded px-2 py-1.5 text-xs ${r.estimated ? 'bg-amber-900/20 border border-amber-800/30' : 'bg-slate-700/20'}`}>
+                    <span className="text-slate-300 font-medium flex items-center gap-1">
+                      {r.month}
+                      {r.estimated && (
+                        <span className="text-amber-400 text-xs font-bold" title="Estimated - market masked the ex-dividend drop. Will auto-update when confirmed.">est.</span>
+                      )}
+                    </span>
                     <span className="text-slate-400 text-right">
                       {r.units.toLocaleString('en-PH', { maximumFractionDigits: 2 })}
                     </span>
-                    <span className="text-slate-400 text-right">₱{r.divPerUnit}</span>
-                    <span className="text-emerald-400 font-semibold text-right">{fmtPeso(earned)}</span>
+                    <span className={`text-right ${r.estimated ? 'text-amber-400' : 'text-slate-400'}`}>₱{r.divPerUnit}</span>
+                    <span className={`font-semibold text-right ${r.estimated ? 'text-amber-400' : 'text-emerald-400'}`}>{fmtPeso(earned)}</span>
                   </div>
                 )
               })}

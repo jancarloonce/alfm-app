@@ -30,6 +30,8 @@ const SIGNAL_COLORS = {
   WATCH_SKIP: 'bg-slate-700 text-slate-400',
   NO_SECOND_BUY: 'bg-slate-700 text-slate-400',
   MONTHLY_CAP: 'bg-red-900 text-red-300',
+  OPP_LOCKED: 'bg-orange-900 text-orange-300',
+  OPP_GAP_WAIT: 'bg-amber-900 text-amber-300',
 }
 
 export default function BacktestCard() {
@@ -97,51 +99,88 @@ export default function BacktestCard() {
 
       {/* Overall score */}
       <div className="bg-slate-700/50 rounded-lg p-4 mb-4 text-center">
-        <p className="text-slate-400 text-xs mb-1">Overall Signal Accuracy (both conditions)</p>
-        <p className={`text-4xl font-black ${pctColor(summary.pctCorrectBoth)}`}>
-          {summary.pctCorrectBoth != null ? `${summary.pctCorrectBoth}%` : '-'}
+        <p className="text-slate-400 text-xs mb-1">Signal Accuracy (15-day window)</p>
+        <p className={`text-4xl font-black ${pctColor(summary.pctPositiveReturn15d)}`}>
+          {summary.pctPositiveReturn15d != null ? `${summary.pctPositiveReturn15d}%` : '-'}
         </p>
         <p className="text-slate-500 text-xs mt-1">
-          of {summary.totalActionable} actionable signals were correct
+          of {summary.totalActionable} actionable signals saw positive return within 15 days
         </p>
-      </div>
-
-      {/* Two metrics */}
-      <div className="grid grid-cols-2 gap-3 mb-4">
-        <div className="bg-slate-700/40 rounded-lg p-3 text-center">
-          <p className="text-slate-500 text-xs mb-1">↑ Price after 3 days</p>
-          <p className={`text-2xl font-bold ${pctColor(summary.pctPositiveReturn3d)}`}>
-            {summary.pctPositiveReturn3d != null ? `${summary.pctPositiveReturn3d}%` : '-'}
-          </p>
-          <p className="text-slate-600 text-xs">3d return &gt; 0</p>
-        </div>
-        <div className="bg-slate-700/40 rounded-lg p-3 text-center">
-          <p className="text-slate-500 text-xs mb-1">Entry below 5d avg</p>
-          <p className={`text-2xl font-bold ${pctColor(summary.pctBelowAvg5d)}`}>
-            {summary.pctBelowAvg5d != null ? `${summary.pctBelowAvg5d}%` : '-'}
-          </p>
-          <p className="text-slate-600 text-xs">good entry quality</p>
-        </div>
       </div>
 
       {/* Average returns */}
       <div className="border-t border-slate-700 pt-3 mb-4">
         <p className="label text-xs mb-2">Avg Return After Buy Signal</p>
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-5 gap-2">
           {[
-            { label: '+1 day', val: summary.avgReturn1d },
-            { label: '+3 days', val: summary.avgReturn3d },
-            { label: '+5 days', val: summary.avgReturn5d },
+            { label: '+1d', val: summary.avgReturn1d },
+            { label: '+3d', val: summary.avgReturn3d },
+            { label: '+5d', val: summary.avgReturn5d },
+            { label: '+15d', val: summary.avgReturn15d },
+            { label: '+30d', val: summary.avgReturn30d },
           ].map(({ label, val }) => (
             <div key={label} className="text-center">
-              <p className={`text-lg font-bold ${returnColor(val)}`}>
-                {val != null ? `${val > 0 ? '+' : ''}${fmt(val, 3)}%` : '-'}
+              <p className={`text-sm font-bold ${returnColor(val)}`}>
+                {val != null ? `${val > 0 ? '+' : ''}${fmt(val, 2)}%` : '-'}
               </p>
               <p className="text-slate-500 text-xs">{label}</p>
             </div>
           ))}
         </div>
       </div>
+
+      {/* Medium-term win rates */}
+      <div className="border-t border-slate-700 pt-3 mb-4">
+        <p className="label text-xs mb-2">Win Rate (Price Higher After)</p>
+        <div className="grid grid-cols-3 gap-3">
+          <div className="bg-slate-700/40 rounded-lg p-3 text-center">
+            <p className={`text-xl font-bold ${pctColor(summary.pctPositiveReturn3d)}`}>
+              {summary.pctPositiveReturn3d != null ? `${summary.pctPositiveReturn3d}%` : '-'}
+            </p>
+            <p className="text-slate-500 text-xs mt-1">3 days</p>
+          </div>
+          <div className="bg-slate-700/40 rounded-lg p-3 text-center">
+            <p className={`text-xl font-bold ${pctColor(summary.pctPositiveReturn15d)}`}>
+              {summary.pctPositiveReturn15d != null ? `${summary.pctPositiveReturn15d}%` : '-'}
+            </p>
+            <p className="text-slate-500 text-xs mt-1">15 days</p>
+          </div>
+          <div className="bg-slate-700/40 rounded-lg p-3 text-center">
+            <p className={`text-xl font-bold ${pctColor(summary.pctPositiveReturn30d)}`}>
+              {summary.pctPositiveReturn30d != null ? `${summary.pctPositiveReturn30d}%` : '-'}
+            </p>
+            <p className="text-slate-500 text-xs mt-1">30 days</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Win rate by bucket */}
+      {summary.bucketWinRates && (
+        <div className="border-t border-slate-700 pt-3 mb-4">
+          <p className="label text-xs mb-2">15d Win Rate by Bucket</p>
+          <div className="space-y-1.5">
+            {[
+              { key: 'dividend',         label: 'Dividend',         color: 'text-emerald-400' },
+              { key: 'opportunity',      label: 'Opportunity',      color: 'text-blue-400'    },
+              { key: 'extreme_override', label: 'Extreme Override', color: 'text-amber-400'   },
+            ].map(({ key, label, color }) => {
+              const b = summary.bucketWinRates[key]
+              if (!b || b.count === 0) return null
+              return (
+                <div key={key} className="flex items-center justify-between">
+                  <span className={`text-xs font-medium ${color}`}>{label}</span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-slate-500 text-xs">{b.count} signals</span>
+                    <span className={`text-sm font-bold ${pctColor(b.pct15d)}`}>
+                      {b.pct15d != null ? `${b.pct15d}%` : '-'}
+                    </span>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* NO_BUY effectiveness */}
       <div className="border-t border-slate-700 pt-3 mb-4">
@@ -209,7 +248,10 @@ export default function BacktestCard() {
           <p className="label text-xs mb-1">Buy Timing Distribution</p>
           <p className="text-slate-600 text-xs mb-2">Which week of the month do actionable signals fire?</p>
           <div className="space-y-1.5">
-            {Object.entries(summary.buyDayDistribution).map(([week, count]) => {
+            {['Week 1 (1-7)', 'Week 2 (8-14)', 'Week 3 (15-21)', 'Week 4 (22+)']
+              .filter((w) => summary.buyDayDistribution[w] !== undefined)
+              .map((week) => {
+              const count = summary.buyDayDistribution[week]
               const total = Object.values(summary.buyDayDistribution).reduce((a, b) => a + b, 0)
               const pct = total > 0 ? (count / total) * 100 : 0
               const isHeavy = pct > 35
@@ -225,6 +267,34 @@ export default function BacktestCard() {
                   <span className={`text-xs w-10 text-right ${isHeavy ? 'text-amber-400 font-bold' : 'text-slate-400'}`}>
                     {count} ({pct.toFixed(0)}%)
                   </span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Week 1 bucket breakdown */}
+      {summary.week1BucketBreakdown && summary.week1BucketBreakdown.total > 0 && (
+        <div className="border-t border-slate-700 pt-3 mb-4">
+          <p className="label text-xs mb-1">Week 1 Composition</p>
+          <p className="text-slate-600 text-xs mb-2">What's driving the Week 1 concentration?</p>
+          <div className="space-y-1">
+            {[
+              { key: 'dividend',         label: 'Dividend',         color: 'text-emerald-400' },
+              { key: 'opportunity',      label: 'Opportunity',      color: 'text-blue-400'    },
+              { key: 'extreme_override', label: 'Extreme Override', color: 'text-amber-400'   },
+            ].map(({ key, label, color }) => {
+              const count = summary.week1BucketBreakdown[key] || 0
+              const total = summary.week1BucketBreakdown.total
+              const pct = total > 0 ? (count / total) * 100 : 0
+              return (
+                <div key={key} className="flex items-center gap-2">
+                  <span className={`text-xs w-32 shrink-0 font-medium ${color}`}>{label}</span>
+                  <div className="flex-1 bg-slate-700 rounded-full h-1.5">
+                    <div className="bg-slate-400 h-1.5 rounded-full" style={{ width: `${pct}%` }} />
+                  </div>
+                  <span className="text-slate-400 text-xs w-14 text-right">{count} ({pct.toFixed(0)}%)</span>
                 </div>
               )
             })}

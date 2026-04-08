@@ -113,8 +113,13 @@ function isWeekend(dateStr) {
 
 /**
  * Auto-detect monthly dividends from NAVPU drop on ex-dividend date.
- * Runs daily. When a known record date is in the past and no dividend doc exists,
- * computes div/unit = NAVPU[record_date] - NAVPU[next_day] and writes the doc.
+ * Runs daily. Handles three cases:
+ *
+ * 1. No doc exists + clear drop detected (>= 0.15) → write confirmed doc
+ * 2. No doc exists + no clear drop + 5+ business days past record → write estimated doc
+ *    using previous confirmed month's div/unit (estimated: true)
+ * 3. Doc exists with estimated: true → keep re-checking NAVPU for actual drop
+ *    and update to confirmed if found
  */
 async function autoDetectDividend(db, todayStr) {
   // Add new record dates here as they are announced
@@ -126,65 +131,103 @@ async function autoDetectDividend(db, todayStr) {
     if (recordDate >= todayStr) continue
 
     const existing = await db.collection('dividends').doc(recordDate).get()
-    if (existing.exists) continue
+    const isEstimated = existing.exists && existing.data().estimated === true
+    if (existing.exists && !isEstimated) continue // confirmed doc, skip
 
     // NAVPU on record date
     const recordSnap = await db.collection('navpu_history').doc(recordDate).get()
     if (!recordSnap.exists || !recordSnap.data().navpu) continue
     const recordNavpu = recordSnap.data().navpu
 
-    // First NAVPU after record date (ex-date drop)
+    // Check next 5 business days for a drop >= 0.15
     const nextSnap = await db.collection('navpu_history')
       .where('date', '>', recordDate)
       .orderBy('date', 'asc')
-      .limit(1)
+      .limit(5)
       .get()
     if (nextSnap.empty) continue
-    const nextNavpu = nextSnap.docs[0].data().navpu
 
-    const divPerUnit = parseFloat((recordNavpu - nextNavpu).toFixed(4))
-    if (divPerUnit < 0.15) {
-      console.log(`[autoDetectDividend] ${recordDate}: drop ₱${divPerUnit} too small, skipping`)
-      continue
+    let detectedDivPerUnit = null
+    for (const doc of nextSnap.docs) {
+      const candidate = parseFloat((recordNavpu - doc.data().navpu).toFixed(4))
+      if (candidate >= 0.15) {
+        detectedDivPerUnit = candidate
+        break
+      }
     }
 
-    // Units held at record date (last buy on or before that date)
-    const buysSnap = await db.collection('buys')
-      .where('date', '<=', recordDate)
-      .orderBy('date', 'desc')
-      .limit(1)
-      .get()
-    if (buysSnap.empty) continue
-    const units = buysSnap.docs[0].data().totalUnitsAfter
+    // Helper: build the doc fields shared by both confirmed and estimated writes
+    async function buildDividendFields(divPerUnit, isEst) {
+      const buysSnap = await db.collection('buys')
+        .where('date', '<=', recordDate)
+        .orderBy('date', 'desc')
+        .limit(1)
+        .get()
+      if (buysSnap.empty) return null
+      const units = buysSnap.docs[0].data().totalUnitsAfter
 
-    // Month label: one month after record date (e.g. Mar record = Apr dividend)
-    const rd = new Date(recordDate + 'T00:00:00')
-    rd.setMonth(rd.getMonth() + 1)
-    const month = rd.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+      const rd = new Date(recordDate + 'T00:00:00')
+      rd.setMonth(rd.getMonth() + 1)
+      const month = rd.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
 
-    // Estimated credited date: ~15 days after record
-    const cr = new Date(recordDate + 'T00:00:00')
-    cr.setDate(cr.getDate() + 15)
-    const credited = [
-      cr.getFullYear(),
-      String(cr.getMonth() + 1).padStart(2, '0'),
-      String(cr.getDate()).padStart(2, '0'),
-    ].join('-')
+      const cr = new Date(recordDate + 'T00:00:00')
+      cr.setDate(cr.getDate() + 15)
+      const credited = [
+        cr.getFullYear(),
+        String(cr.getMonth() + 1).padStart(2, '0'),
+        String(cr.getDate()).padStart(2, '0'),
+      ].join('-')
 
-    const earned = parseFloat((units * divPerUnit).toFixed(4))
+      return {
+        month,
+        date: recordDate,
+        units,
+        divPerUnit,
+        earned: parseFloat((units * divPerUnit).toFixed(4)),
+        credited,
+        autoDetected: true,
+        estimated: isEst,
+        detectedAt: new Date().toISOString(),
+      }
+    }
 
-    await db.collection('dividends').doc(recordDate).set({
-      month,
-      date: recordDate,
-      units,
-      divPerUnit,
-      earned,
-      credited,
-      autoDetected: true,
-      detectedAt: new Date().toISOString(),
-    })
+    if (detectedDivPerUnit !== null) {
+      // Confirmed drop found — write or update to confirmed
+      const fields = await buildDividendFields(detectedDivPerUnit, false)
+      if (!fields) continue
+      await db.collection('dividends').doc(recordDate).set(fields)
+      console.log(`[autoDetectDividend] ${recordDate}: confirmed ₱${detectedDivPerUnit}/unit x ${fields.units} units = ₱${fields.earned}`)
 
-    console.log(`[autoDetectDividend] ${recordDate}: ₱${divPerUnit}/unit x ${units} units = ₱${earned}`)
+    } else if (!existing.exists) {
+      // No drop detected yet — only write estimate if 5+ business days have passed
+      const daysPast = nextSnap.docs.length
+      if (daysPast < 5) {
+        console.log(`[autoDetectDividend] ${recordDate}: no drop yet, only ${daysPast} days past — waiting`)
+        continue
+      }
+
+      // Get previous confirmed month's div/unit as estimate
+      const prevSnap = await db.collection('dividends')
+        .where('date', '<', recordDate)
+        .where('estimated', '!=', true)
+        .orderBy('date', 'desc')
+        .limit(1)
+        .get()
+      if (prevSnap.empty) {
+        console.log(`[autoDetectDividend] ${recordDate}: no prior confirmed dividend to estimate from`)
+        continue
+      }
+      const estimatedDivPerUnit = prevSnap.docs[0].data().divPerUnit
+
+      const fields = await buildDividendFields(estimatedDivPerUnit, true)
+      if (!fields) continue
+      await db.collection('dividends').doc(recordDate).set(fields)
+      console.log(`[autoDetectDividend] ${recordDate}: estimated ₱${estimatedDivPerUnit}/unit (from prev month) — marked estimated`)
+
+    } else {
+      // Doc is estimated and still no drop found — keep waiting
+      console.log(`[autoDetectDividend] ${recordDate}: estimated doc exists, no confirmed drop yet — will retry tomorrow`)
+    }
   }
 }
 
@@ -240,8 +283,27 @@ exports.dailyNavpuCheck = onSchedule(
     const position = positionSnap.exists ? positionSnap.data() : {}
     const avgPrice = position.avgPrice || 45.48
 
-    // 4. Count monthly buys
-    const monthlyBuyCount = await countMonthlyBuys(monthYear)
+    // 4. Compute bucket state variables for signal engine
+    const buysSnap = await db.collection('buys').where('monthYear', '==', monthYear).get()
+    const monthBuys = buysSnap.docs.map((d) => d.data())
+
+    const dividendBuyDoneThisMonth = monthBuys.some((b) => b.isDividendBuy === true)
+
+    const oppBuys = monthBuys.filter((b) => !b.isDividendBuy && b.bucket !== 'extreme_override')
+    const staggerGroupsSeen = new Set()
+    let opportunityBuyCountThisMonth = 0
+    for (const buy of oppBuys) {
+      if (buy.staggerEventDate) {
+        if (!staggerGroupsSeen.has(buy.staggerEventDate)) {
+          staggerGroupsSeen.add(buy.staggerEventDate)
+          opportunityBuyCountThisMonth++
+        }
+      } else {
+        opportunityBuyCountThisMonth++
+      }
+    }
+    const oppDates = oppBuys.map((b) => b.date).sort()
+    const lastOpportunityBuyDate = oppDates.length > 0 ? oppDates[oppDates.length - 1] : null
 
     // 5. Get record dates + stored thresholds from config
     const configSnap = await db.collection('config').doc('app').get()
@@ -270,7 +332,9 @@ exports.dailyNavpuCheck = onSchedule(
       twoDaysAgoNavpu,
       last7Navpus,
       avgPrice,
-      monthlyBuyCount,
+      dividendBuyDoneThisMonth,
+      opportunityBuyCountThisMonth,
+      lastOpportunityBuyDate,
       todayStr,
       recordDates,
       thresholds,
@@ -362,7 +426,9 @@ exports.recordBuy = onCall(
       newAvgPriceOverride,
       totalUnitsOverride,
       totalCostOverride,
-      staggerEventDate = null, // Fix 4: track stagger group for monthly cap
+      staggerEventDate = null,
+      isDividendBuy = false,
+      bucket = null,
     } = request.data
 
     if (!amount || !navpu || amount <= 0 || navpu <= 0) {
@@ -408,7 +474,9 @@ exports.recordBuy = onCall(
       totalUnitsAfter: parseFloat(newTotalUnits.toFixed(4)),
       totalCostAfter: parseFloat(newTotalCost.toFixed(2)),
       monthYear,
-      staggerEventDate: staggerEventDate || null, // Fix 4
+      staggerEventDate: staggerEventDate || null,
+      isDividendBuy: isDividendBuy || false,
+      bucket: bucket || null,
       createdAt: FieldValue.serverTimestamp(),
     })
 

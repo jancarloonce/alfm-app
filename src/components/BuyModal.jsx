@@ -31,6 +31,8 @@ const SIGNAL_LABEL = {
   PRIORITY_BUY: 'Priority Buy',
   NO_SECOND_BUY: 'No Second Buy',
   MONTHLY_CAP: 'Monthly Cap',
+  OPP_LOCKED: 'Opp Locked',
+  OPP_GAP_WAIT: 'Opp Gap Wait',
 }
 
 const SIGNAL_COLOR = {
@@ -96,6 +98,8 @@ export default function BuyModal({
       const payload = {
         amount: parsedAmount,
         navpu: parsedNavpu,
+        isDividendBuy: todaySignal?.isDividendBuy || false,
+        bucket: todaySignal?.bucket || null,
       }
       if (overrideUnits && parseFloat(manualUnits) > 0) {
         payload.unitsOverride = parseFloat(manualUnits)

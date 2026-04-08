@@ -104,9 +104,22 @@ export default function App() {
     const unsub = onSnapshot(q, (snap) => {
       const data = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
       setBuys(data)
-      // Count this month's buys
+      // Count opportunity buys this month (stagger-aware, excludes dividend and extreme_override)
       const thisMonth = data.filter((b) => b.monthYear === currentMonthStr)
-      setMonthlyBuyCount(thisMonth.length)
+      const oppBuys = thisMonth.filter((b) => !b.isDividendBuy && b.bucket !== 'extreme_override')
+      const staggerSeen = new Set()
+      let oppCount = 0
+      for (const buy of oppBuys) {
+        if (buy.staggerEventDate) {
+          if (!staggerSeen.has(buy.staggerEventDate)) {
+            staggerSeen.add(buy.staggerEventDate)
+            oppCount++
+          }
+        } else {
+          oppCount++
+        }
+      }
+      setMonthlyBuyCount(oppCount)
     }, (err) => {
       console.error('Buys listener error:', err)
     })
