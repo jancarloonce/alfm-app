@@ -184,7 +184,7 @@ You should see:
 
 ## Daily Schedule
 
-The `dailyNavpuCheck` function runs automatically at **9:00 AM PH time (1:00 AM UTC)** every day.
+The `dailyNavpuCheck` function runs automatically at **4:00 PM PH time (8:00 AM UTC)** every day.
 
 It will:
 1. Scrape the latest NAVPU from alfmmutualfunds.com (or BPI fallback)

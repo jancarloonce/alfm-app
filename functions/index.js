@@ -112,6 +112,62 @@ function isWeekend(dateStr) {
 }
 
 /**
+ * Philippine public holidays — days the PSE is closed and BPI orders cannot be placed.
+ * Update this list each year as proclamations are released.
+ */
+const PH_HOLIDAYS = new Set([
+  // 2026 Regular Holidays
+  '2026-01-01', // New Year's Day
+  '2026-04-02', // Maundy Thursday
+  '2026-04-03', // Good Friday
+  '2026-04-09', // Araw ng Kagitingan (Day of Valor)
+  '2026-05-01', // Labor Day
+  '2026-06-12', // Independence Day
+  '2026-08-31', // National Heroes Day
+  '2026-11-30', // Bonifacio Day
+  '2026-12-25', // Christmas Day
+  '2026-12-30', // Rizal Day
+  // 2026 Special Non-Working Holidays
+  '2026-04-04', // Black Saturday
+  '2026-08-21', // Ninoy Aquino Day
+  '2026-11-01', // All Saints Day
+  '2026-11-02', // All Souls Day
+  '2026-12-08', // Feast of the Immaculate Conception
+  '2026-12-24', // Christmas Eve
+  '2026-12-31', // New Year's Eve
+])
+
+/**
+ * Returns true if the given date is a Philippine public holiday.
+ */
+function isPhHoliday(dateStr) {
+  return PH_HOLIDAYS.has(dateStr)
+}
+
+/**
+ * Returns true if the given date is a non-trading day (weekend or PH holiday).
+ */
+function isNonTradingDay(dateStr) {
+  return isWeekend(dateStr) || isPhHoliday(dateStr)
+}
+
+/**
+ * Returns the most recent trading day (Mon-Fri, non-PH-holiday) before a given date string.
+ * e.g. Monday after a holiday → last Friday before the holiday
+ */
+function lastBusinessDay(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00')
+  do {
+    d.setDate(d.getDate() - 1)
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const dd = String(d.getDate()).padStart(2, '0')
+    const s = `${y}-${m}-${dd}`
+    if (!isNonTradingDay(s)) return s
+  } while (true)
+}
+
+/**
  * Auto-detect monthly dividends from NAVPU drop on ex-dividend date.
  * Runs daily. Handles three cases:
  *
@@ -235,7 +291,7 @@ async function autoDetectDividend(db, todayStr) {
 
 exports.dailyNavpuCheck = onSchedule(
   {
-    schedule: '0 9 * * *', // 9:00 AM Asia/Manila
+    schedule: '0 16 * * *', // 4:00 PM Asia/Manila
     timeZone: 'Asia/Manila',
     memory: '1GiB',
     timeoutSeconds: 180,
@@ -246,6 +302,13 @@ exports.dailyNavpuCheck = onSchedule(
     const monthYear = getMonthPH()
 
     console.log(`[dailyNavpuCheck] Running for ${todayStr}`)
+
+    // Skip on weekends and PH public holidays — no orders can be placed on those days
+    if (isNonTradingDay(todayStr)) {
+      const reason = isWeekend(todayStr) ? 'weekend' : 'PH public holiday'
+      console.log(`[dailyNavpuCheck] Skipping — ${todayStr} is a ${reason}. No signal sent.`)
+      return
+    }
 
     // 1. Scrape latest NAVPU
     const { navpu: scrapedNavpu, effectiveDate: scrapedDate, source, error: scrapeError } = await scrapeNavpu()
@@ -264,7 +327,10 @@ exports.dailyNavpuCheck = onSchedule(
     // Use the date extracted from the page (e.g. Apr 6), falling back to yesterday
     const yesterday = offsetDate(todayStr, -1)
     const navpuDate = scrapedDate || yesterday
-    console.log(`[dailyNavpuCheck] Scraped NAVPU: ${scrapedNavpu} from ${source} (effective date: ${navpuDate})`)
+    // Stale = navpuDate is older than the last business day (T-1 is normal for mutual funds)
+    const expectedNavpuDate = lastBusinessDay(todayStr)
+    const isStaleNavpu = navpuDate < expectedNavpuDate
+    console.log(`[dailyNavpuCheck] Scraped NAVPU: ${scrapedNavpu} from ${source} (effective date: ${navpuDate}, expected: ${expectedNavpuDate})${isStaleNavpu ? ' ⚠️ STALE' : ' ✓'}`)
 
     // 2. Get historical navpus for signal analysis
     // Strip weekends to avoid comparing the same NAVPU value across Sat/Sun/Mon
@@ -305,10 +371,9 @@ exports.dailyNavpuCheck = onSchedule(
     const oppDates = oppBuys.map((b) => b.date).sort()
     const lastOpportunityBuyDate = oppDates.length > 0 ? oppDates[oppDates.length - 1] : null
 
-    // 5. Get record dates + stored thresholds from config
-    const configSnap = await db.collection('config').doc('app').get()
-    const configData = configSnap.exists ? configSnap.data() : {}
-    const recordDates = configData.recordDates || ['2026-01-29', '2026-02-26', '2026-03-27', '2026-04-28']
+    // 5. Get record dates from dividends collection (single source of truth, shared with backtest)
+    const divConfigSnap = await db.collection('dividends').get()
+    const recordDates = divConfigSnap.docs.map((d) => d.data().date || d.id).filter(Boolean).sort()
 
     // 6. Compute dynamic thresholds from historical NAVPU data
     // Fix 2: pass values sorted chronologically (oldest→newest) so computeThresholds
@@ -399,7 +464,7 @@ exports.dailyNavpuCheck = onSchedule(
       const user = gmailUser.value()
       const pass = gmailPass.value()
       if (user && pass) {
-        await sendSignalEmail(signal, todayStr, user, pass)
+        await sendSignalEmail(signal, todayStr, user, pass, { isStaleNavpu, navpuDate, expectedNavpuDate })
         console.log('[dailyNavpuCheck] Email sent successfully.')
       } else {
         console.warn('[dailyNavpuCheck] Gmail credentials not configured:skipping email.')

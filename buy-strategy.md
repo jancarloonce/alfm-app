@@ -7,9 +7,8 @@ FUND BASICS
 - Goal: Long-term unit accumulation + monthly dividend income. No selling.
 - Dividend yield: ~5–6% annually, paid monthly
 - Order cutoff: 2:00 PM PH time on business days
-  → Before 2 PM = executes at TODAY's NAVPU (preferred)
+  → Before 2 PM = executes at TODAY's NAVPU
   → After 2 PM or weekend = executes at NEXT business day's NAVPU
-  → Always try to place orders before 2 PM for price certainty
 - Minimum holding: 180 calendar days. Early redemption = 1% fee.
 - Historical range (Jan–Apr 2026): ₱45.56 – ₱47.05
 - Mean zone: ₱46.00 – ₱46.50
@@ -25,125 +24,121 @@ MY CURRENT POSITION (as of Apr 7, 2026)
 - Latest NAVPU        : ₱45.82
 
 IMPORTANT: My avg buy price is ₱45.48. If NAVPU drops below this:
-  → That is a HIGH PRIORITY buy signal regardless of tier
-  → Buying below avg price lowers my cost basis
-  → Flag this clearly in the recommendation
+  → PRIORITY BUY regardless of tier. Buying below avg price lowers cost basis.
+  → Flag this clearly in the recommendation.
 
 ---
 
-MONTHLY BUY LIMIT RULES (DISCIPLINE CONTROL)
+MONTHLY BUY LIMIT — BUCKET SYSTEM
 
-DEFAULT: 1 buy per month maximum.
-  → Once you execute a buy this month, do not buy again unless an exception applies.
+Two independent buckets control buys. They do not share limits.
 
-EXCEPTION — allow a 2nd buy this month only if ANY of these are true:
-  1. Daily drop >= -₱0.30 (strong dip signal)
-  2. NAVPU drops below avg price ₱45.48 (cost basis improvement opportunity)
-  3. Post-record-date window (day 1–3 after record date) AND NAVPU drop >= ₱0.25
+DIVIDEND BUCKET (max 1 per month):
+  Triggers when ALL of these are true:
+    1. Within 1–3 days AFTER the monthly record date
+    2. Daily NAVPU drop >= -₱0.25
+    3. No dividend buy yet this month
+    4. NAVPU is below the 60th percentile of the 90-day range (quality filter)
+  Effect: minimum BUY_MORE (₱3,500). Exempt from the lock period and gap rules.
 
-HARD CAP: Maximum 2 buys per month. No exceptions beyond this.
+OPPORTUNITY BUCKET (max 2 per month):
+  All other buy signals fall here.
+  Rules:
+    - Days 1–5 of month: locked. No buys unless PRIORITY_BUY or STRONG_DROP.
+    - Minimum 7 trading days between opportunity buys (gap rule).
+    - PRIORITY_BUY and STRONG_DROP bypass the lock and gap (not the 2/month cap).
 
-TRACKING: Always ask me at the start — "Have you bought already this month?"
-  → If yes (1 buy done): only proceed if an exception condition is met.
-  → If yes (2 buys done): output "Monthly cap reached. No more buys this month."
-  → If no: proceed normally with buy tier logic.
+EXTREME OVERRIDE (no cap):
+  Triggers when daily drop >= -₱0.50 AND NAVPU is below the 30th percentile.
+  Bypasses ALL rules including monthly caps.
+  Note: stagger into 2–3 smaller purchases over the next few days — drop may continue.
 
 ---
 
 POSITION SIZING (FIXED AMOUNTS)
-- Minimum buy : ₱1,000
-- Maximum buy : ₱5,000
-- WATCH        → ₱1,000 (only if dip signal present, otherwise skip)
-- BUY          → ₱2,000 – ₱3,000
-- BUY MORE     → ₱3,000 – ₱4,000
-- AGGRESSIVE   → ₱5,000 (max out)
+
+- WATCH        → ₱1,000 (only if a dip signal is present, otherwise WATCH_SKIP = no buy)
+- BUY          → ₱2,500
+- BUY_MORE     → ₱3,500
+- AGGRESSIVE   → ₱5,000
+- PRIORITY_BUY → ₱5,000
+
+Dip signal upgrade: if a dip signal is present, tier upgrades by +1 level and amount increases by ₱1,000 (max ₱5,000).
+Downtrend filter: if LOWER_HIGHS trend detected, amount is reduced by 35% (min ₱1,000). PRIORITY_BUY in downtrend = ₱3,500.
 
 ---
 
 BUY TIERS (BASE LOGIC)
 
-NAVPU >= ₱46.50         → NO BUY. Hold. Poor risk/reward.
-NAVPU ₱46.20 – ₱46.49  → WATCH. ₱1,000 only if dip signal present. Otherwise skip.
-NAVPU ₱46.00 – ₱46.19  → BUY. Standard entry. Deploy ₱2,000–₱3,000.
-NAVPU ₱45.80 – ₱45.99  → BUY MORE. Strong zone. Deploy ₱3,000–₱4,000.
-NAVPU <= ₱45.79         → AGGRESSIVE BUY. Near 3-month low. Deploy ₱5,000.
+Thresholds are dynamic — computed from the 90-day rolling NAVPU window using percentiles:
+  NO_BUY    : NAVPU >= 75th percentile
+  WATCH     : NAVPU >= 60th percentile
+  BUY       : NAVPU >= 45th percentile
+  BUY_MORE  : NAVPU >= 30th percentile
+  AGGRESSIVE: NAVPU < 30th percentile
 
-SPECIAL RULE — BELOW AVG PRICE (₱45.48)
-NAVPU < ₱45.48          → PRIORITY BUY. Buying below cost basis.
-                           Deploy ₱5,000. Flag as "Below avg price — cost basis improvement."
+Baseline fallback (if dynamic thresholds drift):
+  NO_BUY    : NAVPU >= ₱46.50
+  WATCH     : NAVPU >= ₱46.20
+  BUY       : NAVPU >= ₱46.00
+  BUY_MORE  : NAVPU >= ₱45.80
+  AGGRESSIVE: NAVPU < ₱45.80
+
+SPECIAL RULE — BELOW AVG PRICE (₱45.48):
+  NAVPU < ₱45.48 → PRIORITY_BUY. Deploy ₱5,000. Flag as cost basis improvement.
 
 ---
 
-DIP SIGNALS (UPGRADE BUY TIER BY +1 LEVEL)
+DIP SIGNALS (UPGRADE TIER BY +1, AMOUNT +₱1,000)
 
-1. STRONG DROP
+Only the single strongest dip signal is applied (priority: STRONG_DROP > CONFIRMED_WEAKNESS > DROP_STABILIZATION).
+
+1. STRONG_DROP
    - Condition: Daily change <= -₱0.30
-   - Effect: Upgrade tier by one level + increase amount by ₱1,000
-   - Insight: Historically rebounds within 1–3 days
-   - Observed: Jan 30 (-₱0.35), Mar 3 (-₱0.49), Feb 5 (-₱0.36). All bounced.
+   - Bypasses Days 1–5 lock and 7-day gap rule (still subject to 2/month cap)
 
-2. CONFIRMED WEAKNESS
+2. CONFIRMED_WEAKNESS
    - Condition: 2 consecutive red days AND total 2-day drop >= ₱0.20
-   - Effect: Upgrade tier by one level
-   - Purpose: Filters weak/false signals. Buy on 3rd day open.
 
-3. DROP + STABILIZATION
-   - Condition: Large drop (>= -₱0.30) followed by flat/sideways day (<= ±₱0.10)
-   - Effect: Upgrade tier by one level
+3. DROP_STABILIZATION
+   - Condition: Previous day drop >= -₱0.30 AND today's move <= ±₱0.10
    - Insight: Selling pressure easing. Good entry.
-   - Example: Mar 3 dropped to ₱45.56 → Mar 4 bounced to ₱45.95.
 
-4. EXTREME DROP RULE
-   - Condition: Daily drop >= -₱0.50
-   - Effect: Do NOT deploy full amount in one go
-   - Action: Split into 2–3 staggered buys over next 2–3 days
-   - Reason: Drop may continue before rebounding.
-   - Note: Each staggered buy counts as 1 toward the monthly cap.
+Noise filter: daily moves between -₱0.08 and +₱0.08 are ignored (no dip signals triggered).
 
 ---
 
 DIVIDEND CYCLE AWARENESS
 
 - Record date: ~last week of every month
-  Confirmed: Jan 29, Feb 26, Mar 27, 2026
+  Confirmed: Jan 29, Feb 26, Mar 27, Apr 28, 2026
 - Payout date: ~15th of the following month
-  Confirmed: Feb 14, Mar 16, Apr 15, 2026
-- Next estimated: Record ~Apr 28–30, 2026. Payout: ~May 15, 2026.
 
-POST-RECORD BUY WINDOW (HIGH EDGE)
-- Condition: Within 1–3 days AFTER record date AND NAVPU drop >= ₱0.25
-- Action: Minimum BUY MORE (₱3,000–₱4,000)
-- Note: This qualifies as an exception to the monthly buy limit if 1 buy already done.
-- Data: Jan record → dipped ₱0.35. Feb record → dipped ₱0.28.
+POST-RECORD BUY WINDOW (days 1–3 after record date):
+  If drop >= -₱0.25 and NAVPU below 60th percentile → dividend bucket buy, minimum BUY_MORE (₱3,500).
 
-PRE-RECORD CAUTION
-- Avoid buying the week BEFORE record date
-- Reason: NAVPU tends to be elevated. Dividend already priced in.
-- My dividend is ~₱0.24/unit x 4,684 units = ~₱1,124/month at current units.
-  This does NOT justify buying at peak price.
+PRE-RECORD CAUTION (7 days before record date):
+  Avoid buying. NAVPU tends to be elevated — dividend already priced in.
 
 ---
 
 TREND FILTER (RISK CONTROL)
 
-- If NAVPU shows lower highs over 1–2 weeks:
-  → Reduce position size by 30–50%
-  → Example: BUY MORE becomes ₱2,000 instead of ₱4,000
-- If NAVPU consistently drifting downward with no bounce:
-  → Avoid aggressive buys unless strong dip signal (>= -₱0.30) present
-- If 2–3 consecutive green days:
-  → Wait for pullback. Do not chase momentum.
+LOWER_HIGHS: 5+ of last 7 days closed lower than prior day, OR net 7-day decline >= -₱0.40.
+  → Reduce position size by 35%. PRIORITY_BUY capped at ₱3,500.
+
+CONSECUTIVE_GREEN: 2–3 straight green days with no dip signal.
+  → Warning added. Do not chase momentum.
 
 ---
 
-WHAT TO AVOID
+SIGNALS THAT RESULT IN NO BUY
 
-- NAVPU >= ₱46.50 → No buying
-- 2–3 straight green days → Wait, don't chase
-- Daily move between -₱0.10 and +₱0.10 → Noise, ignore
-- Buying aggressively just to capture monthly dividend
-- Going all-in on extreme drop (>= -₱0.50) — stagger instead
-- Exceeding 2 buys in a single month
+- NO_BUY: NAVPU above no-buy threshold
+- WATCH_SKIP: WATCH tier but no dip signal present
+- OPP_LOCKED: Days 1–5 of month, normal signal (no PRIORITY_BUY or STRONG_DROP)
+- OPP_GAP_WAIT: Less than 7 trading days since last opportunity buy
+- MONTHLY_CAP: 2 opportunity buys already used this month
 
 ---
 
@@ -153,14 +148,13 @@ When I give you NAVPU data, always respond in this exact format:
 
 NAVPU today    : ₱[X]
 Daily change   : ₱[X] ([X]%)
-Buys this month: [0 / 1 / 2 — monthly cap reached]
-Signal         : [NO BUY / WATCH / BUY / BUY MORE / AGGRESSIVE BUY / PRIORITY BUY / MONTHLY CAP REACHED]
-Amount         : ₱[exact amount] (or "Skip" if NO BUY or cap reached)
-Dip signal     : [Yes — describe / No]
-Exception rule : [Yes — which exception applies / No / N/A]
-Div cycle      : [Post-record window / Pre-record caution / N/A]
+Signal         : [NO_BUY / WATCH / WATCH_SKIP / BUY / BUY_MORE / AGGRESSIVE / PRIORITY_BUY / OPP_LOCKED / OPP_GAP_WAIT / MONTHLY_CAP]
+Bucket         : [dividend / opportunity / extreme_override / n/a]
+Amount         : ₱[exact amount] (or "Skip" if no-buy signal)
+Dip signal     : [STRONG_DROP / CONFIRMED_WEAKNESS / DROP_STABILIZATION / None]
+Div cycle      : [POST_RECORD / PRE_RECORD_CAUTION / N/A]
 vs Avg price   : [Above avg (₱45.48) / At avg / Below avg — cost basis improvement]
-Execution tip  : [Before/after 2 PM note if time given, otherwise N/A]
+Execution tip  : [Today before 2 PM / Next trading day (after 2 PM)]
 
 RECOMMENDATION:
 [1–2 sentences. Plain language. Tell me exactly what to do, how much, and why.]
@@ -171,7 +165,6 @@ REMINDERS
 - My avg price is ₱45.48. Any buy below this improves my cost basis — prioritize these.
 - Only 2,228.85 of my 4,684.51 units are available for redemption (others in 180-day lock).
 - NAVPU moves with global markets (BlackRock feeder fund) and USD/PHP rate.
-  External shocks can override support levels.
-- Strategy based on Jan–Apr 2026 data (90 days). Update thresholds as more data accumulates.
-- Dividends not guaranteed. Estimated monthly div at current units: ~₱1,124.
+- Thresholds auto-update from rolling 90-day window. Baseline fallback if drift detected.
+- Dividends not guaranteed. Estimated monthly div at current units: ~₱1,124/month.
 - This is not financial advice. For personal accumulation decisions only.

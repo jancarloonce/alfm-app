@@ -26,7 +26,7 @@ function fmt(n, d = 2) {
 /**
  * Build the HTML email body.
  */
-function buildEmailHtml(signal, todayStr) {
+function buildEmailHtml(signal, todayStr, { isStaleNavpu = false, navpuDate = null, expectedNavpuDate = null } = {}) {
   const {
     signal: signalName,
     amount,
@@ -118,6 +118,10 @@ function buildEmailHtml(signal, todayStr) {
     <p>${todayStr} &middot; Asia/Manila</p>
   </div>
   <div class="body">
+    ${isStaleNavpu ? `
+    <div class="warning">
+      ⚠️ STALE DATA: Website not yet updated. NAVPU shown (₱${fmt(todayNavpu, 2)}) is from ${navpuDate}, expected ${expectedNavpuDate || todayStr}. Signal may be inaccurate — verify before acting.
+    </div>` : ''}
     <div class="signal-badge" style="background-color: ${signalColor}22; color: ${signalColor}; border: 1px solid ${signalColor}55;">
       ${signalName.replace(/_/g, ' ')}
     </div>
@@ -125,8 +129,8 @@ function buildEmailHtml(signal, todayStr) {
 
     <div style="margin-bottom: 16px;">
       <div class="row">
-        <span class="label">NAVPU Today</span>
-        <span class="value">₱${fmt(todayNavpu, 2)}</span>
+        <span class="label">NAVPU ${isStaleNavpu ? `(${navpuDate})` : 'Today'}</span>
+        <span class="value">₱${fmt(todayNavpu, 2)}${isStaleNavpu ? ' ⚠️' : ''}</span>
       </div>
       <div class="row">
         <span class="label">Daily Change</span>
@@ -168,7 +172,7 @@ function buildEmailHtml(signal, todayStr) {
     </div>
 
     <div class="tip">
-      ⏰ <strong>Execution tip:</strong> Place your order <strong>before 2:00 PM PH time</strong> to capture today's NAVPU of ₱${fmt(todayNavpu, 2)}.
+      ⏰ <strong>Execution tip:</strong> Place your order <strong>before 2:00 PM PH time</strong>. Latest published NAVPU is ₱${fmt(todayNavpu, 2)} (T-1). Your actual execution price will be today's closing NAVPU.
     </div>
   </div>
   <div class="footer">
@@ -188,7 +192,7 @@ function buildEmailHtml(signal, todayStr) {
  * @param {string} gmailUser - Gmail address
  * @param {string} gmailPass - Gmail app password
  */
-async function sendSignalEmail(signal, todayStr, gmailUser, gmailPass) {
+async function sendSignalEmail(signal, todayStr, gmailUser, gmailPass, navpuMeta = {}) {
   const transporter = nodemailer.createTransport({
     host: 'smtp.gmail.com',
     port: 587,
@@ -200,11 +204,12 @@ async function sendSignalEmail(signal, todayStr, gmailUser, gmailPass) {
   })
 
   const { signal: signalName, amount, todayNavpu } = signal
+  const { isStaleNavpu = false } = navpuMeta
   const subject = `ALFM Signal: ${signalName.replace(/_/g, ' ')} ${
     amount > 0 ? fmtPeso(amount, 0) : ''
-  } | NAVPU ₱${fmt(todayNavpu, 2)}`
+  } | NAVPU ₱${fmt(todayNavpu, 2)}${isStaleNavpu ? ' ⚠️ STALE' : ''}`
 
-  const html = buildEmailHtml(signal, todayStr)
+  const html = buildEmailHtml(signal, todayStr, navpuMeta)
 
   const info = await transporter.sendMail({
     from: `"ALFM Tracker" <${gmailUser}>`,

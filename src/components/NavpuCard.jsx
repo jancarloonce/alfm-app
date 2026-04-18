@@ -26,7 +26,7 @@ function getTierForNavpu(navpu, avgPrice, thresholds) {
   return 'AGGRESSIVE'
 }
 
-export default function NavpuCard({ todayNavpu, dailyChange, navHigh, navLow, navMean, thresholds }) {
+export default function NavpuCard({ todayNavpu, navDate, dailyChange, navHigh, navLow, navMean, thresholds }) {
   const avgPrice = 45.48 // will come from position in future
   const isUp = dailyChange !== null && dailyChange > 0
   const isDown = dailyChange !== null && dailyChange < 0
@@ -39,7 +39,14 @@ export default function NavpuCard({ todayNavpu, dailyChange, navHigh, navLow, na
 
   return (
     <div className="card h-full">
-      <p className="label mb-4">NAVPU Today</p>
+      <p className="label mb-4">
+        Latest NAVPU
+        {navDate && (
+          <span className="ml-2 text-slate-500 text-xs font-normal">
+            as of {navDate}
+          </span>
+        )}
+      </p>
 
       {/* Main NAVPU */}
       <div className="text-center mb-4">

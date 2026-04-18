@@ -1,6 +1,7 @@
 'use strict'
 
 const puppeteer = require('puppeteer-core')
+const fetch = require('node-fetch')
 
 let chromium
 try {
@@ -8,6 +9,16 @@ try {
 } catch (e) {
   chromium = null
 }
+
+// Affinity API — fund-specific endpoint, no browser needed
+// Returns a single object with navpu + navDate directly
+const AFFINITY_API_URL =
+  'https://affinitycorp.net/api/funds/alfm_gmif_peso?query=' +
+  encodeURIComponent(
+    JSON.stringify({
+      select: ['key', 'description', 'navpu', 'navDate', 'currency'],
+    })
+  )
 
 const PRIMARY_URL = 'https://www.alfmmutualfunds.com/'
 const FALLBACK_URL =
@@ -170,12 +181,58 @@ async function scrapeFromUrl(browser, url) {
 }
 
 /**
+ * Fetch NAVPU from Affinity Corp JSON API (no browser needed).
+ * @returns {Promise<{navpu: number|null, effectiveDate: string|null, source: string, error: string|null}>}
+ */
+async function scrapeFromAffinity() {
+  try {
+    console.log('[scraper] Trying Affinity API:', AFFINITY_API_URL)
+    const res = await fetch(AFFINITY_API_URL, {
+      headers: {
+        'accept': 'application/json',
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      },
+      timeout: 10000,
+    })
+
+    if (!res.ok) {
+      return { navpu: null, effectiveDate: null, source: 'affinitycorp.net', error: `HTTP ${res.status}` }
+    }
+
+    const fund = await res.json()
+
+    if (!fund || fund.key !== 'alfm_gmif_peso' || fund.currency !== 'PHP') {
+      return { navpu: null, effectiveDate: null, source: 'affinitycorp.net', error: `Unexpected response: ${JSON.stringify(fund).slice(0, 100)}` }
+    }
+
+    const navpu = parseFloat(parseFloat(fund.navpu).toFixed(2))
+    const effectiveDate = fund.navDate || null // already YYYY-MM-DD
+
+    if (isNaN(navpu) || navpu < 44 || navpu > 55) {
+      return { navpu: null, effectiveDate: null, source: 'affinitycorp.net', error: `NAVPU out of expected range: ${fund.navpu}` }
+    }
+
+    console.log('[scraper] Affinity API returned NAVPU:', navpu, 'date:', effectiveDate)
+    return { navpu, effectiveDate, source: 'affinitycorp.net', error: null }
+  } catch (err) {
+    return { navpu: null, effectiveDate: null, source: 'affinitycorp.net', error: err.message }
+  }
+}
+
+/**
  * Main scraper:tries primary URL, then fallback.
  * Returns null on total failure (does not throw).
  *
  * @returns {Promise<{navpu: number|null, source: string|null, error: string|null}>}
  */
 async function scrapeNavpu() {
+  // Try Affinity API first — no browser needed, fastest
+  const affinity = await scrapeFromAffinity()
+  if (affinity.navpu !== null) {
+    return affinity
+  }
+  console.log('[scraper] Affinity API failed:', affinity.error, '— falling back to browser sources')
+
   let browser = null
   try {
     browser = await launchBrowser()

@@ -191,6 +191,7 @@ export default function App() {
           />
           <NavpuCard
             todayNavpu={todayNavpu}
+            navDate={latestNavEntry?.date}
             dailyChange={dailyChange}
             navHigh={navHigh}
             navLow={navLow}
