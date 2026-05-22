@@ -251,7 +251,91 @@ async function runBacktest(db) {
     computedAt: new Date().toISOString(),
   }
 
+  // ── Advanced metrics ───────────────────────────────────────────────────────
+  const sharpeRatio         = computeAlfmSharpe(actionable.map((r) => r.return3d))
+  const consecutiveLosses   = computeAlfmConsecutiveLosses(actionable)
+  const drawdown            = computeAlfmDrawdown(allDocs.map((d) => d.navpu))
+
+  summary.sharpeRatio       = sharpeRatio
+  summary.consecutiveLosses = consecutiveLosses
+  summary.drawdown          = drawdown
+
   return { results, summary }
+}
+
+// ── Metric helpers ────────────────────────────────────────────────────────────
+
+function computeAlfmSharpe(returns3d) {
+  const n = returns3d.filter((r) => r != null).length
+  if (n < 5) return null
+  const clean = returns3d.filter((r) => r != null)
+  const mean  = clean.reduce((s, v) => s + v, 0) / n
+  const std   = Math.sqrt(clean.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / n)
+  if (std === 0) return null
+  // 3-day returns → annualize by ~122 periods/year (365/3)
+  const RISK_FREE_3D = (0.05 / 365) * 3
+  const raw          = (mean - RISK_FREE_3D) / std
+  const annualized   = parseFloat((raw * Math.sqrt(122)).toFixed(3))
+  const interpretation =
+    annualized < 0    ? 'NEGATIVE'     :
+    annualized < 0.75 ? 'WEAK'         :
+    annualized < 1    ? 'ACCEPTABLE'   :
+    annualized < 2    ? 'GOOD'         :
+    annualized < 3    ? 'EXCELLENT'    : 'SUSPICIOUS'
+  return { annualized, raw: parseFloat(raw.toFixed(3)), meanReturn3d: parseFloat(mean.toFixed(4)), stdReturn3d: parseFloat(std.toFixed(4)), sampleCount: n, interpretation }
+}
+
+function computeAlfmConsecutiveLosses(actionable) {
+  let maxStreak = 0
+  let curStreak = 0
+  const streaks = []
+  for (const r of actionable) {
+    if (r.return3d != null && r.return3d < 0) {
+      curStreak++
+      if (curStreak > maxStreak) maxStreak = curStreak
+    } else {
+      if (curStreak > 0) streaks.push(curStreak)
+      curStreak = 0
+    }
+  }
+  if (curStreak > 0) streaks.push(curStreak)
+  const avgStreak = streaks.length ? parseFloat((streaks.reduce((s, v) => s + v, 0) / streaks.length).toFixed(1)) : 0
+  return { maxConsecutiveLosses: maxStreak, avgConsecutiveLosses: avgStreak, streakCount: streaks.length }
+}
+
+function computeAlfmDrawdown(navpuSeries) {
+  if (!navpuSeries || navpuSeries.length < 2) return null
+  let peak = navpuSeries[0]
+  let maxDD = 0
+  let ddSum = 0
+  let ddCount = 0
+  let inDD = false
+  let ddStart = 0
+  let maxDDDays = 0
+  let ddStartIdx = 0
+
+  for (let i = 1; i < navpuSeries.length; i++) {
+    const v = navpuSeries[i]
+    if (v > peak) { peak = v; inDD = false }
+    const dd = (peak - v) / peak * 100
+    if (dd > 0) {
+      if (!inDD) { inDD = true; ddStartIdx = i; ddCount++ }
+      if (dd > maxDD) {
+        maxDD = dd
+        maxDDDays = i - ddStartIdx
+      }
+      ddSum += dd
+    } else {
+      inDD = false
+    }
+  }
+
+  return {
+    maxDrawdownPct: parseFloat(maxDD.toFixed(2)),
+    avgDrawdownPct: ddCount > 0 ? parseFloat((ddSum / navpuSeries.length).toFixed(2)) : 0,
+    maxDrawdownDays: maxDDDays,
+    drawdownCount: ddCount,
+  }
 }
 
 module.exports = { runBacktest }

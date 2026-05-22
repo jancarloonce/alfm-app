@@ -1,14 +1,39 @@
 import React, { useState, useEffect } from 'react'
-import { collection, onSnapshot, orderBy, query } from 'firebase/firestore'
+import { collection, onSnapshot, orderBy, query, doc, setDoc } from 'firebase/firestore'
 import { db } from '../lib/firebase'
 
-// Upcoming record dates: div/unit is estimated until confirmed
-const FUTURE_RECORDS = [
-  { date: '2026-03-27', divPerUnit: 0.24 },
-  { date: '2026-04-28', divPerUnit: 0.24 },
-  { date: '2026-05-28', divPerUnit: 0.24 },
-  { date: '2026-06-26', divPerUnit: 0.24 },
-]
+/**
+ * Returns the last Monday–Friday day of the given month (0-indexed).
+ * Weekend-only check; PH holidays not tracked in frontend.
+ */
+function lastBizDayOfMonth(year, month) {
+  let day = new Date(year, month + 1, 0).getDate()
+  while (true) {
+    const dow = new Date(year, month, day).getDay()
+    if (dow !== 0 && dow !== 6) break
+    day--
+  }
+  return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+}
+
+/**
+ * Compute the next `count` ALFM record dates algorithmically (last biz day of month).
+ * Dates are marked estimated=true until confirmed from Firestore (BPI scrape).
+ */
+function computeUpcomingRecordDates(todayStr, count = 4) {
+  const results = []
+  const now = new Date(todayStr + 'T00:00:00')
+  let year = now.getFullYear()
+  let month = now.getMonth()
+  while (results.length < count) {
+    const date = lastBizDayOfMonth(year, month)
+    if (date >= todayStr) results.push({ date, divPerUnit: null, estimated: true })
+    month++
+    if (month > 11) { month = 0; year++ }
+    if (year > now.getFullYear() + 3) break
+  }
+  return results
+}
 
 function addDays(dateStr, days) {
   const d = new Date(dateStr + 'T00:00:00')
@@ -43,6 +68,14 @@ export default function DividendCard({ todayStr, buys = [] }) {
   const [dividends, setDividends] = useState([])
   const [showHistory, setShowHistory] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [showLogForm, setShowLogForm] = useState(false)
+  const [logEarned, setLogEarned] = useState('')
+  const [logUnits, setLogUnits] = useState('')
+  const [logRecordDate, setLogRecordDate] = useState('')
+  const [logCredited, setLogCredited] = useState('')
+  const [logSaving, setLogSaving] = useState(false)
+  const [logError, setLogError] = useState(null)
+  const [logSuccess, setLogSuccess] = useState(false)
 
   useEffect(() => {
     const q = query(collection(db, 'dividends'), orderBy('date', 'asc'))
@@ -53,10 +86,24 @@ export default function DividendCard({ todayStr, buys = [] }) {
     return () => unsub()
   }, [])
 
-  const pastDividends = dividends.filter((r) => r.date < todayStr)
-  const futureRecords = FUTURE_RECORDS.filter((r) => r.date >= todayStr)
-  const nextRecord = futureRecords[0] || FUTURE_RECORDS[FUTURE_RECORDS.length - 1]
+  const pastDividends = dividends
+    .map((r) => ({ ...r, date: r.date || r.id }))
+    .filter((r) => r.date < todayStr && (r.divPerUnit || r.earned))
   const lastPast = pastDividends[pastDividends.length - 1]
+
+  // Compute upcoming record dates algorithmically; overlay confirmed Firestore data where available
+  const confirmedFuture = dividends
+    .map((r) => ({ ...r, date: r.date || r.id }))
+    .filter((r) => r.date >= todayStr)
+  const avgDivPerUnitFallback = pastDividends.length > 0
+    ? pastDividends.reduce((s, r) => s + (r.divPerUnit || 0), 0) / pastDividends.length
+    : null
+  const futureRecords = computeUpcomingRecordDates(todayStr, 4).map((algo) => {
+    const confirmed = confirmedFuture.find((c) => c.date.slice(0, 7) === algo.date.slice(0, 7))
+    if (confirmed) return { ...confirmed, estimated: false }
+    return { ...algo, divPerUnit: avgDivPerUnitFallback }
+  })
+  const nextRecord = futureRecords[0] || { date: todayStr, divPerUnit: avgDivPerUnitFallback, estimated: true }
 
   const daysToRecord = daysBetween(todayStr, nextRecord.date)
   const daysSinceRecord = lastPast ? daysBetween(lastPast.date, todayStr) : null
@@ -73,6 +120,56 @@ export default function DividendCard({ todayStr, buys = [] }) {
   const estNextDiv = currentUnits * nextRecord.divPerUnit
   const nextPayoutDate = addDays(nextRecord.date, 15)
 
+  const lastKnownRecord = lastPast ?? futureRecords.filter((r) => r.date < todayStr).slice(-1)[0] ?? null
+
+  function openLogForm() {
+    const defaultRecord = lastKnownRecord?.date ?? ''
+    const defaultUnits = getUnitsAtDate(buys, defaultRecord || todayStr) || currentUnits
+    setLogRecordDate(defaultRecord)
+    setLogUnits(defaultUnits > 0 ? String(defaultUnits) : '')
+    setLogCredited(defaultRecord ? addDays(defaultRecord, 21) : '')
+    setLogEarned('')
+    setLogError(null)
+    setLogSuccess(false)
+    setShowLogForm(true)
+  }
+
+  async function handleLogDividend() {
+    const earned = parseFloat(logEarned)
+    const units = parseFloat(logUnits)
+    if (!logRecordDate) { setLogError('Record date is required.'); return }
+    if (!earned || earned <= 0) { setLogError('Enter the earned amount (₱) from your BPI statement.'); return }
+    if (!units || units <= 0) { setLogError('Enter the units held at the record date.'); return }
+    const divPerUnit = parseFloat((earned / units).toFixed(4))
+    const rd = new Date(logRecordDate + 'T00:00:00')
+    rd.setMonth(rd.getMonth() + 1)
+    const month = rd.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+    const payload = {
+      date: logRecordDate,
+      month,
+      units,
+      divPerUnit,
+      earned: parseFloat(earned.toFixed(4)),
+      credited: logCredited || addDays(logRecordDate, 21),
+      autoDetected: false,
+      estimated: false,
+    }
+    setLogSaving(true)
+    setLogError(null)
+    try {
+      await setDoc(doc(db, 'dividends', logRecordDate), payload)
+      setLogSuccess(true)
+      setTimeout(() => {
+        setShowLogForm(false)
+        setLogSuccess(false)
+      }, 1500)
+    } catch (err) {
+      setLogError(err.message || 'Failed to save.')
+    } finally {
+      setLogSaving(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="card h-full">
@@ -87,17 +184,121 @@ export default function DividendCard({ todayStr, buys = [] }) {
       {/* Header */}
       <div className="flex items-center justify-between">
         <p className="label">Dividend Cycle</p>
-        {isPostRecord && (
-          <span className="text-xs font-bold px-2 py-0.5 rounded bg-green-900/50 text-green-400 border border-green-700">
-            POST-RECORD
-          </span>
-        )}
-        {isPreRecord && !isPostRecord && (
-          <span className="text-xs font-bold px-2 py-0.5 rounded bg-yellow-900/50 text-yellow-400 border border-yellow-700">
-            PRE-RECORD
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={openLogForm}
+            className="text-xs px-2 py-0.5 rounded border border-slate-600 text-slate-400 hover:text-slate-200 hover:border-slate-500 transition-colors"
+          >
+            + Log
+          </button>
+          {isPostRecord && (
+            <span className="text-xs font-bold px-2 py-0.5 rounded bg-green-900/50 text-green-400 border border-green-700">
+              POST-RECORD
+            </span>
+          )}
+          {isPreRecord && !isPostRecord && (
+            <span className="text-xs font-bold px-2 py-0.5 rounded bg-yellow-900/50 text-yellow-400 border border-yellow-700">
+              PRE-RECORD
+            </span>
+          )}
+        </div>
       </div>
+
+      {/* Log Dividend inline form */}
+      {showLogForm && (
+        <div className="bg-slate-700/40 border border-slate-600 rounded-xl p-4 space-y-3">
+          <p className="text-slate-300 text-sm font-semibold">Log Received Dividend</p>
+
+          {logSuccess && (
+            <div className="bg-emerald-900/50 border border-emerald-700 rounded-lg px-3 py-2 text-emerald-300 text-sm text-center font-semibold">
+              Saved!
+            </div>
+          )}
+          {logError && (
+            <div className="bg-red-900/40 border border-red-700 rounded-lg px-3 py-2 text-red-300 text-xs">
+              {logError}
+            </div>
+          )}
+
+          {!logSuccess && (
+            <>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-slate-500 text-xs block mb-1">Record Date</label>
+                  <input
+                    type="date"
+                    value={logRecordDate}
+                    onChange={(e) => {
+                      setLogRecordDate(e.target.value)
+                      if (e.target.value) setLogCredited(addDays(e.target.value, 21))
+                    }}
+                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-2 py-1.5 text-white text-xs focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-slate-500 text-xs block mb-1">Credited Date</label>
+                  <input
+                    type="date"
+                    value={logCredited}
+                    onChange={(e) => setLogCredited(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-2 py-1.5 text-white text-xs focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-slate-500 text-xs block mb-1">Earned (₱ from BPI)</label>
+                  <div className="relative">
+                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 text-xs">₱</span>
+                    <input
+                      type="number"
+                      value={logEarned}
+                      onChange={(e) => setLogEarned(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-600 rounded-lg pl-5 pr-2 py-1.5 text-white text-xs focus:outline-none focus:border-emerald-500"
+                      placeholder="1143.62"
+                      step="0.01"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-slate-500 text-xs block mb-1">Units at Record Date</label>
+                  <input
+                    type="number"
+                    value={logUnits}
+                    onChange={(e) => setLogUnits(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-2 py-1.5 text-white text-xs focus:outline-none focus:border-emerald-500"
+                    placeholder="4684.514"
+                    step="0.001"
+                  />
+                </div>
+              </div>
+
+              {parseFloat(logEarned) > 0 && parseFloat(logUnits) > 0 && (
+                <p className="text-slate-400 text-xs">
+                  ₱/unit: <span className="text-emerald-400 font-semibold">₱{(parseFloat(logEarned) / parseFloat(logUnits)).toFixed(4)}</span>
+                </p>
+              )}
+
+              <div className="flex gap-2 pt-1">
+                <button
+                  onClick={() => setShowLogForm(false)}
+                  className="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs font-medium py-2 rounded-lg transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleLogDividend}
+                  disabled={logSaving}
+                  className="flex-1 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white text-xs font-bold py-2 rounded-lg transition-colors"
+                >
+                  {logSaving ? 'Saving...' : 'Save Dividend'}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       {isPostRecord && (
         <div className="bg-green-900/30 border border-green-700/50 rounded-lg px-3 py-2 -mt-2">
@@ -173,9 +374,9 @@ export default function DividendCard({ todayStr, buys = [] }) {
                       )}
                     </span>
                     <span className="text-slate-400 text-right">
-                      {r.units.toLocaleString('en-PH', { maximumFractionDigits: 2 })}
+                      {(r.units ?? 0).toLocaleString('en-PH', { maximumFractionDigits: 2 })}
                     </span>
-                    <span className={`text-right ${r.estimated ? 'text-amber-400' : 'text-slate-400'}`}>₱{r.divPerUnit}</span>
+                    <span className={`text-right ${r.estimated ? 'text-amber-400' : 'text-slate-400'}`}>₱{r.divPerUnit ?? '—'}</span>
                     <span className={`font-semibold text-right ${r.estimated ? 'text-amber-400' : 'text-emerald-400'}`}>{fmtPeso(earned)}</span>
                   </div>
                 )
@@ -202,6 +403,7 @@ export default function DividendCard({ todayStr, buys = [] }) {
               <div className="flex items-center gap-2">
                 <span className={`w-1.5 h-1.5 rounded-full ${idx === 0 ? 'bg-emerald-400' : 'bg-slate-600'}`} />
                 <span className="text-slate-300 text-xs">{formatDate(r.date)}</span>
+                {r.estimated && <span className="text-amber-400 text-xs">est.</span>}
               </div>
               <span className="text-slate-500 text-xs">{daysBetween(todayStr, r.date)}d</span>
             </div>

@@ -58,6 +58,7 @@ export default function BuyModal({
   const recommendedAmount = todaySignal?.amount ?? 2500
   const defaultNavpu = todayNavpu ?? position?.avgPrice ?? 46.0
 
+  const [date, setDate] = useState(todayStr || new Date().toISOString().slice(0, 10))
   const [amount, setAmount] = useState(String(recommendedAmount))
   const [navpu, setNavpu] = useState(String(defaultNavpu))
   const [overrideUnits, setOverrideUnits] = useState(false)
@@ -100,6 +101,7 @@ export default function BuyModal({
         navpu: parsedNavpu,
         isDividendBuy: todaySignal?.isDividendBuy || false,
         bucket: todaySignal?.bucket || null,
+        date: date || null,
       }
       if (overrideUnits && parseFloat(manualUnits) > 0) {
         payload.unitsOverride = parseFloat(manualUnits)
@@ -195,6 +197,32 @@ export default function BuyModal({
 
           {!success && (
             <>
+              {/* Date input */}
+              <div>
+                <label className="block text-slate-400 text-xs font-medium mb-1.5">
+                  Buy Date
+                </label>
+                <input
+                  type="date"
+                  value={date}
+                  max={todayStr || new Date().toISOString().slice(0, 10)}
+                  onChange={(e) => setDate(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-3 text-white font-bold focus:outline-none focus:border-emerald-500 transition-colors"
+                />
+                {date !== (todayStr || new Date().toISOString().slice(0, 10)) && (
+                  <p className="text-amber-400 text-xs mt-1">
+                    Backdating to {date}
+                    {' '}·{' '}
+                    <button
+                      onClick={() => setDate(todayStr || new Date().toISOString().slice(0, 10))}
+                      className="text-emerald-500 hover:text-emerald-400 underline"
+                    >
+                      Use today
+                    </button>
+                  </p>
+                )}
+              </div>
+
               {/* Amount input */}
               <div>
                 <label className="block text-slate-400 text-xs font-medium mb-1.5">

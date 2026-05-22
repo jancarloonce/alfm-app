@@ -19,7 +19,7 @@ function fmtPeso(n, decimals = 2) {
   )
 }
 
-export default function PositionCard({ position, todayNavpu, monthlyBuyCount }) {
+export default function PositionCard({ position, todayNavpu, monthlyBuyCount, dividendBuyDone }) {
   if (!position) {
     return (
       <div className="card">
@@ -40,8 +40,7 @@ export default function PositionCard({ position, todayNavpu, monthlyBuyCount }) 
 
   const isGain = unrealizedGain >= 0
 
-  // Monthly buy progress
-  const buyDots = [0, 1].map((i) => ({
+  const oppDots = [0, 1].map((i) => ({
     filled: i < monthlyBuyCount,
     capped: monthlyBuyCount >= 2,
   }))
@@ -50,21 +49,36 @@ export default function PositionCard({ position, todayNavpu, monthlyBuyCount }) 
     <div className="card h-full">
       <div className="flex items-center justify-between mb-4">
         <p className="label">Your Position</p>
-        <div className="flex items-center gap-1.5" title={`${monthlyBuyCount}/2 buys this month`} >
-          {buyDots.map((dot, i) => (
+        <div className="flex items-center gap-3">
+          {/* Opportunity bucket */}
+          <div className="flex items-center gap-1" title={`Opportunity buys: ${monthlyBuyCount}/2`}>
+            {oppDots.map((dot, i) => (
+              <div
+                key={i}
+                className={`w-2.5 h-2.5 rounded-full border-2 transition-colors ${
+                  dot.capped && dot.filled
+                    ? 'bg-red-500 border-red-400'
+                    : dot.filled
+                    ? 'bg-emerald-500 border-emerald-400'
+                    : 'bg-transparent border-slate-600'
+                }`}
+              />
+            ))}
+            <span className="text-slate-500 text-xs">Opp {monthlyBuyCount}/2</span>
+          </div>
+          {/* Divider */}
+          <span className="text-slate-700 text-xs">·</span>
+          {/* Dividend bucket */}
+          <div className="flex items-center gap-1" title={dividendBuyDone ? 'Dividend buy used this month' : 'Dividend buy available'}>
             <div
-              key={i}
-              className={`w-3 h-3 rounded-full border-2 transition-colors ${
-                dot.capped && dot.filled
-                  ? 'bg-red-500 border-red-400'
-                  : dot.filled
-                  ? 'bg-emerald-500 border-emerald-400'
-                  : 'bg-transparent border-slate-600'
+              className={`w-2.5 h-2.5 rounded-full border-2 transition-colors ${
+                dividendBuyDone ? 'bg-amber-500 border-amber-400' : 'bg-transparent border-slate-600'
               }`}
-              title={dot.filled ? 'Buy recorded' : 'Available'}
             />
-          ))}
-          <span className="text-slate-500 text-xs ml-1">{monthlyBuyCount}/2 buys</span>
+            <span className={`text-xs ${dividendBuyDone ? 'text-amber-500' : 'text-slate-500'}`}>
+              Div {dividendBuyDone ? '1/1' : '0/1'}
+            </span>
+          </div>
         </div>
       </div>
 

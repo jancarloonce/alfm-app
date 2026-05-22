@@ -34,28 +34,32 @@ const SIGNAL_COLORS = {
   OPP_GAP_WAIT: 'bg-amber-900 text-amber-300',
 }
 
-export default function BacktestCard() {
+export default function BacktestCard({
+  summaryCollection = 'config',
+  summaryDoc        = 'backtest_summary',
+  resultsCollection = 'backtest_results',
+}) {
   const [summary, setSummary] = useState(null)
   const [results, setResults] = useState([])
   const [showTable, setShowTable] = useState(false)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const unsub = onSnapshot(doc(db, 'config', 'backtest_summary'), (snap) => {
+    const unsub = onSnapshot(doc(db, summaryCollection, summaryDoc), (snap) => {
       if (snap.exists()) setSummary(snap.data())
       setLoading(false)
     })
     return () => unsub()
-  }, [])
+  }, [summaryCollection, summaryDoc])
 
   useEffect(() => {
     if (!showTable) return
-    const q = query(collection(db, 'backtest_results'), orderBy('date', 'desc'))
+    const q = query(collection(db, resultsCollection), orderBy('date', 'desc'))
     const unsub = onSnapshot(q, (snap) => {
       setResults(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
     })
     return () => unsub()
-  }, [showTable])
+  }, [showTable, resultsCollection])
 
   if (loading) {
     return (
@@ -298,6 +302,55 @@ export default function BacktestCard() {
                 </div>
               )
             })}
+          </div>
+        </div>
+      )}
+
+      {/* Sharpe / Drawdown / Consecutive Losses */}
+      {(summary.sharpeRatio || summary.drawdown || summary.consecutiveLosses) && (
+        <div className="border-t border-slate-700 pt-3 mb-4">
+          <p className="label text-xs mb-2">Risk Metrics</p>
+          <div className="grid grid-cols-3 gap-2">
+            {summary.sharpeRatio && (
+              <div className="bg-slate-800/60 rounded-lg p-2.5 text-center">
+                <p className="text-slate-500 text-xs mb-1">Sharpe (3d)</p>
+                <p className={`text-base font-bold ${
+                  summary.sharpeRatio.interpretation === 'NEGATIVE' ? 'text-red-400' :
+                  summary.sharpeRatio.interpretation === 'WEAK'     ? 'text-orange-400' :
+                  summary.sharpeRatio.interpretation === 'ACCEPTABLE' ? 'text-yellow-400' :
+                  'text-green-400'
+                }`}>
+                  {summary.sharpeRatio.annualized >= 0 ? '+' : ''}{summary.sharpeRatio.annualized?.toFixed(2)}
+                </p>
+                <p className="text-slate-500 text-xs mt-0.5">{summary.sharpeRatio.interpretation}</p>
+              </div>
+            )}
+            {summary.drawdown && (
+              <div className="bg-slate-800/60 rounded-lg p-2.5 text-center">
+                <p className="text-slate-500 text-xs mb-1">Max Drawdown</p>
+                <p className={`text-base font-bold ${
+                  summary.drawdown.maxDrawdownPct < 10 ? 'text-green-400' :
+                  summary.drawdown.maxDrawdownPct < 20 ? 'text-yellow-400' :
+                  'text-red-400'
+                }`}>
+                  -{summary.drawdown.maxDrawdownPct?.toFixed(1)}%
+                </p>
+                <p className="text-slate-500 text-xs mt-0.5">{summary.drawdown.maxDrawdownDays}d duration</p>
+              </div>
+            )}
+            {summary.consecutiveLosses && (
+              <div className="bg-slate-800/60 rounded-lg p-2.5 text-center">
+                <p className="text-slate-500 text-xs mb-1">Max Loss Streak</p>
+                <p className={`text-base font-bold ${
+                  summary.consecutiveLosses.maxConsecutiveLosses <= 3 ? 'text-green-400' :
+                  summary.consecutiveLosses.maxConsecutiveLosses <= 6 ? 'text-yellow-400' :
+                  'text-red-400'
+                }`}>
+                  {summary.consecutiveLosses.maxConsecutiveLosses}
+                </p>
+                <p className="text-slate-500 text-xs mt-0.5">avg {summary.consecutiveLosses.avgConsecutiveLosses} per streak</p>
+              </div>
+            )}
           </div>
         </div>
       )}

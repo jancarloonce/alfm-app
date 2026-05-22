@@ -1,4 +1,21 @@
 {
-  "indexes": [],
+  "indexes": [
+    {
+      "collectionGroup": "btc_buys",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "bucket",    "order": "ASCENDING" },
+        { "fieldPath": "timestamp", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "mgpiff_buys",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "monthYear",  "order": "ASCENDING" },
+        { "fieldPath": "createdAt",  "order": "DESCENDING" }
+      ]
+    }
+  ],
   "fieldOverrides": []
 }

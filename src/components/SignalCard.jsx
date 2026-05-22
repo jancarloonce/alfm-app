@@ -1,5 +1,21 @@
 import React from 'react'
 
+function toDate(val) {
+  if (!val) return null
+  if (typeof val === 'string') return new Date(val)
+  if (typeof val.toDate === 'function') return val.toDate()
+  if (val.seconds) return new Date(val.seconds * 1000)
+  return null
+}
+
+function formatSignalTime(val) {
+  const d = toDate(val)
+  if (!d) return null
+  const time = d.toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Manila' })
+  const date = d.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', timeZone: 'Asia/Manila' })
+  return `${date} · ${time}`
+}
+
 function fmt(n, decimals = 2) {
   if (n === null || n === undefined) return '-'
   return Number(n).toLocaleString('en-PH', {
@@ -119,9 +135,14 @@ export default function SignalCard({ signal, todayNavpu, dailyChange }) {
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
         {/* Left: Signal info */}
         <div className="flex-1">
-          <div className="flex items-center gap-3 mb-3">
-            <div className={`w-3 h-3 rounded-full ${config.dot}`} />
-            <span className="label">Today's Signal</span>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-3">
+              <div className={`w-3 h-3 rounded-full ${config.dot}`} />
+              <span className="label">Today's Signal</span>
+            </div>
+            {signal?.createdAt && (
+              <span className="text-slate-500 text-xs">{formatSignalTime(signal.createdAt)}</span>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-3 mb-4">

@@ -24,8 +24,8 @@ const PRIMARY_URL = 'https://www.alfmmutualfunds.com/'
 const FALLBACK_URL =
   'https://www.bpi.com.ph/group/bpiwealth/our-solutions/personal/investment-solutions/funds/alfm-global-multi-asset-income-fund-php'
 
-// Regex to match NAVPU in the range of 45.xx to 47.xx
-const NAVPU_REGEX = /4[5-7]\.\d{2}/g
+// Regex to match NAVPU in the range of 44.xx to 55.xx
+const NAVPU_REGEX = /(?:4[4-9]|5[0-5])\.\d{2}/g
 
 /**
  * Extract NAVPU from page text.
@@ -34,11 +34,11 @@ const NAVPU_REGEX = /4[5-7]\.\d{2}/g
  */
 function extractNavpu(text) {
   const contextRegex =
-    /(?:NAVPU|NAV(?:\s+per\s+unit)?)[:\s\-]*(?:PHP|₱)?\s*(4[5-7]\.\d{2})/gi
+    /(?:NAVPU|NAV(?:\s+per\s+unit)?)[:\s\-]*(?:PHP|₱)?\s*((?:4[4-9]|5[0-5])\.\d{2})/gi
   const ctxMatch = contextRegex.exec(text)
   if (ctxMatch) {
     const val = parseFloat(ctxMatch[1])
-    if (val >= 44 && val <= 50) return val
+    if (val >= 44 && val <= 55) return val
   }
 
   const allMatches = []
@@ -46,12 +46,12 @@ function extractNavpu(text) {
   const re = new RegExp(NAVPU_REGEX.source, 'g')
   while ((m = re.exec(text)) !== null) {
     const val = parseFloat(m[0])
-    if (val >= 44 && val <= 50) allMatches.push(val)
+    if (val >= 44 && val <= 55) allMatches.push(val)
   }
 
   if (allMatches.length === 0) return null
 
-  const inRange = allMatches.filter((v) => v >= 45 && v <= 47)
+  const inRange = allMatches.filter((v) => v >= 44 && v <= 55)
   if (inRange.length > 0) {
     const freq = {}
     inRange.forEach((v) => (freq[v] = (freq[v] || 0) + 1))
@@ -275,4 +275,4 @@ async function scrapeNavpu() {
   }
 }
 
-module.exports = { scrapeNavpu, extractNavpu }
+module.exports = { scrapeNavpu, extractNavpu, launchBrowser }

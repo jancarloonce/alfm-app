@@ -32,7 +32,7 @@ const BASELINE_THRESHOLDS = {
  * Compute dynamic buy tier thresholds from historical NAVPU values.
  * Uses rolling 90-day window with a stability guard.
  */
-function computeThresholds(navpuValuesChronological) {
+function computeThresholds(navpuValuesChronological, baseline = BASELINE_THRESHOLDS, maxDrift = 0.30) {
   const clean = navpuValuesChronological.filter((v) => v != null && !isNaN(v))
   const window90 = clean.slice(-90)
   const sorted = [...window90].sort((a, b) => a - b)
@@ -49,7 +49,6 @@ function computeThresholds(navpuValuesChronological) {
   }
 
   const mean90 = parseFloat((sorted.reduce((a, b) => a + b, 0) / n).toFixed(4))
-  const MAX_DRIFT = 0.30
 
   const computed = {
     noBuyThreshold:  parseFloat(percentile(75).toFixed(2)),
@@ -58,8 +57,8 @@ function computeThresholds(navpuValuesChronological) {
     buyMoreThreshold:parseFloat(percentile(30).toFixed(2)),
   }
 
-  const drifted = Object.keys(computed).some((k) => computed[k] < mean90 - MAX_DRIFT)
-  const finalThresholds = drifted ? BASELINE_THRESHOLDS : computed
+  const drifted = Object.keys(computed).some((k) => computed[k] < mean90 - maxDrift)
+  const finalThresholds = drifted ? baseline : computed
 
   return {
     ...finalThresholds,
@@ -425,4 +424,4 @@ function analyzeSignal({
   }
 }
 
-module.exports = { analyzeSignal, getBaseTier, computeThresholds, AVG_PRICE }
+module.exports = { analyzeSignal, getBaseTier, computeThresholds, AVG_PRICE, BASELINE_THRESHOLDS }
