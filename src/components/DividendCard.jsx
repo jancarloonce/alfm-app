@@ -69,7 +69,8 @@ export default function DividendCard({ todayStr, buys = [] }) {
   const [showHistory, setShowHistory] = useState(false)
   const [loading, setLoading] = useState(true)
   const [showLogForm, setShowLogForm] = useState(false)
-  const [logEarned, setLogEarned] = useState('')
+  const [logUnitDividend, setLogUnitDividend] = useState('')
+  const [logNavpu, setLogNavpu] = useState('')
   const [logUnits, setLogUnits] = useState('')
   const [logRecordDate, setLogRecordDate] = useState('')
   const [logCredited, setLogCredited] = useState('')
@@ -128,19 +129,23 @@ export default function DividendCard({ todayStr, buys = [] }) {
     setLogRecordDate(defaultRecord)
     setLogUnits(defaultUnits > 0 ? String(defaultUnits) : '')
     setLogCredited(defaultRecord ? addDays(defaultRecord, 21) : '')
-    setLogEarned('')
+    setLogUnitDividend('')
+    setLogNavpu('')
     setLogError(null)
     setLogSuccess(false)
     setShowLogForm(true)
   }
 
   async function handleLogDividend() {
-    const earned = parseFloat(logEarned)
+    const unitDividend = parseFloat(logUnitDividend)
+    const navpu = parseFloat(logNavpu)
     const units = parseFloat(logUnits)
     if (!logRecordDate) { setLogError('Record date is required.'); return }
-    if (!earned || earned <= 0) { setLogError('Enter the earned amount (₱) from your BPI statement.'); return }
+    if (!unitDividend || unitDividend <= 0) { setLogError('Enter the Unit Dividend from the BPI email.'); return }
+    if (!navpu || navpu <= 0) { setLogError('Enter the NAVPU as of Record Date from the BPI email.'); return }
     if (!units || units <= 0) { setLogError('Enter the units held at the record date.'); return }
-    const divPerUnit = parseFloat((earned / units).toFixed(4))
+    const divPerUnit = parseFloat((unitDividend * navpu).toFixed(4))
+    const earned = parseFloat((units * divPerUnit).toFixed(4))
     const rd = new Date(logRecordDate + 'T00:00:00')
     rd.setMonth(rd.getMonth() + 1)
     const month = rd.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
@@ -148,11 +153,14 @@ export default function DividendCard({ todayStr, buys = [] }) {
       date: logRecordDate,
       month,
       units,
+      unitIncome: unitDividend,
+      navpuAtRecord: navpu,
       divPerUnit,
-      earned: parseFloat(earned.toFixed(4)),
+      earned,
       credited: logCredited || addDays(logRecordDate, 21),
       autoDetected: false,
       estimated: false,
+      confirmed: true,
     }
     setLogSaving(true)
     setLogError(null)
@@ -187,7 +195,7 @@ export default function DividendCard({ todayStr, buys = [] }) {
         <div className="flex items-center gap-2">
           <button
             onClick={openLogForm}
-            className="text-xs px-2 py-0.5 rounded border border-slate-600 text-slate-400 hover:text-slate-200 hover:border-slate-500 transition-colors"
+            className="text-xs px-2 py-0.5 rounded border border-neutral-800 text-slate-400 hover:text-slate-200 hover:border-neutral-700 transition-colors"
           >
             + Log
           </button>
@@ -206,7 +214,7 @@ export default function DividendCard({ todayStr, buys = [] }) {
 
       {/* Log Dividend inline form */}
       {showLogForm && (
-        <div className="bg-slate-700/40 border border-slate-600 rounded-xl p-4 space-y-3">
+        <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 space-y-3">
           <p className="text-slate-300 text-sm font-semibold">Log Received Dividend</p>
 
           {logSuccess && (
@@ -232,7 +240,7 @@ export default function DividendCard({ todayStr, buys = [] }) {
                       setLogRecordDate(e.target.value)
                       if (e.target.value) setLogCredited(addDays(e.target.value, 21))
                     }}
-                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-2 py-1.5 text-white text-xs focus:outline-none focus:border-emerald-500"
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-2 py-1.5 text-white text-xs focus:outline-none focus:border-emerald-500"
                   />
                 </div>
                 <div>
@@ -241,49 +249,65 @@ export default function DividendCard({ todayStr, buys = [] }) {
                     type="date"
                     value={logCredited}
                     onChange={(e) => setLogCredited(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-2 py-1.5 text-white text-xs focus:outline-none focus:border-emerald-500"
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-2 py-1.5 text-white text-xs focus:outline-none focus:border-emerald-500"
                   />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="text-slate-500 text-xs block mb-1">Earned (₱ from BPI)</label>
-                  <div className="relative">
-                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 text-xs">₱</span>
-                    <input
-                      type="number"
-                      value={logEarned}
-                      onChange={(e) => setLogEarned(e.target.value)}
-                      className="w-full bg-slate-900 border border-slate-600 rounded-lg pl-5 pr-2 py-1.5 text-white text-xs focus:outline-none focus:border-emerald-500"
-                      placeholder="1143.62"
-                      step="0.01"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="text-slate-500 text-xs block mb-1">Units at Record Date</label>
+                  <label className="text-slate-500 text-xs block mb-1">Unit Dividend (from email)</label>
                   <input
                     type="number"
-                    value={logUnits}
-                    onChange={(e) => setLogUnits(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-2 py-1.5 text-white text-xs focus:outline-none focus:border-emerald-500"
-                    placeholder="4684.514"
-                    step="0.001"
+                    value={logUnitDividend}
+                    onChange={(e) => setLogUnitDividend(e.target.value)}
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-2 py-1.5 text-white text-xs focus:outline-none focus:border-emerald-500"
+                    placeholder="0.0051"
+                    step="0.0001"
+                  />
+                </div>
+                <div>
+                  <label className="text-slate-500 text-xs block mb-1">NAVPU at Record Date</label>
+                  <input
+                    type="number"
+                    value={logNavpu}
+                    onChange={(e) => setLogNavpu(e.target.value)}
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-2 py-1.5 text-white text-xs focus:outline-none focus:border-emerald-500"
+                    placeholder="48.0460"
+                    step="0.0001"
                   />
                 </div>
               </div>
 
-              {parseFloat(logEarned) > 0 && parseFloat(logUnits) > 0 && (
-                <p className="text-slate-400 text-xs">
-                  ₱/unit: <span className="text-emerald-400 font-semibold">₱{(parseFloat(logEarned) / parseFloat(logUnits)).toFixed(4)}</span>
-                </p>
+              <div>
+                <label className="text-slate-500 text-xs block mb-1">Units at Record Date</label>
+                <input
+                  type="number"
+                  value={logUnits}
+                  onChange={(e) => setLogUnits(e.target.value)}
+                  className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-2 py-1.5 text-white text-xs focus:outline-none focus:border-emerald-500"
+                  placeholder="4684.506"
+                  step="0.001"
+                />
+              </div>
+
+              {parseFloat(logUnitDividend) > 0 && parseFloat(logNavpu) > 0 && parseFloat(logUnits) > 0 && (
+                <div className="bg-neutral-900 rounded-lg px-3 py-2 space-y-0.5">
+                  <p className="text-slate-400 text-xs">
+                    ₱/unit: <span className="text-slate-200 font-semibold">₱{(parseFloat(logUnitDividend) * parseFloat(logNavpu)).toFixed(4)}</span>
+                    <span className="text-slate-600 mx-1">=</span>
+                    <span className="text-slate-500">{logUnitDividend} × {logNavpu}</span>
+                  </p>
+                  <p className="text-slate-400 text-xs">
+                    Est. earned: <span className="text-emerald-400 font-semibold">₱{(parseFloat(logUnits) * parseFloat(logUnitDividend) * parseFloat(logNavpu)).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  </p>
+                </div>
               )}
 
               <div className="flex gap-2 pt-1">
                 <button
                   onClick={() => setShowLogForm(false)}
-                  className="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs font-medium py-2 rounded-lg transition-colors"
+                  className="flex-1 bg-neutral-800 hover:bg-neutral-700 text-slate-300 text-xs font-medium py-2 rounded-lg transition-colors"
                 >
                   Cancel
                 </button>
@@ -320,7 +344,7 @@ export default function DividendCard({ todayStr, buys = [] }) {
           <p className="text-emerald-400 font-black text-xl">{fmtPeso(totalEarned)}</p>
           <p className="text-slate-500 text-xs mt-0.5">{pastDividends.length} months</p>
         </div>
-        <div className="bg-slate-700/40 rounded-lg px-3 py-3 text-center">
+        <div className="bg-neutral-900 rounded-lg px-3 py-3 text-center">
           <p className="text-slate-400 text-xs mb-1">Est. Next Payout</p>
           <p className="text-white font-black text-xl">{fmtPeso(estNextDiv)}</p>
           <p className="text-slate-500 text-xs mt-0.5">
@@ -331,14 +355,14 @@ export default function DividendCard({ todayStr, buys = [] }) {
 
       {/* Next record + payout */}
       <div className="grid grid-cols-2 gap-3">
-        <div className="bg-slate-700/30 rounded-lg px-3 py-2">
+        <div className="bg-neutral-900 rounded-lg px-3 py-2">
           <p className="text-slate-500 text-xs mb-1">Next Record</p>
           <p className="text-white text-sm font-semibold">{formatDate(nextRecord.date)}</p>
           <p className="text-slate-400 text-xs mt-0.5">
             {daysToRecord > 0 ? `${daysToRecord}d away` : daysToRecord === 0 ? 'Today' : `${Math.abs(daysToRecord)}d ago`}
           </p>
         </div>
-        <div className="bg-slate-700/30 rounded-lg px-3 py-2">
+        <div className="bg-neutral-900 rounded-lg px-3 py-2">
           <p className="text-slate-500 text-xs mb-1">Est. Payout</p>
           <p className="text-white text-sm font-semibold">{formatDate(nextPayoutDate)}</p>
           <p className="text-slate-400 text-xs mt-0.5">~15d after record</p>
@@ -350,15 +374,16 @@ export default function DividendCard({ todayStr, buys = [] }) {
         <>
           <button
             onClick={() => setShowHistory((v) => !v)}
-            className="w-full text-center text-slate-500 hover:text-slate-300 text-xs py-2 border border-slate-700 rounded transition-colors"
+            className="w-full text-center text-slate-500 hover:text-slate-300 text-xs py-2 border border-neutral-800 rounded transition-colors"
           >
             {showHistory ? 'Hide' : 'Show'} dividend history ({pastDividends.length} months)
           </button>
 
           {showHistory && (
             <div className="space-y-1">
-              <div className="grid grid-cols-4 text-slate-600 text-xs px-2 pb-1">
+              <div className="grid grid-cols-5 text-slate-600 text-xs px-2 pb-1">
                 <span>Month</span>
+                <span className="text-right">Payout Date</span>
                 <span className="text-right">Units</span>
                 <span className="text-right">₱/unit</span>
                 <span className="text-right">Earned</span>
@@ -366,13 +391,14 @@ export default function DividendCard({ todayStr, buys = [] }) {
               {[...pastDividends].reverse().map((r) => {
                 const earned = r.earned ?? r.units * r.divPerUnit
                 return (
-                  <div key={r.date} className={`grid grid-cols-4 items-center rounded px-2 py-1.5 text-xs ${r.estimated ? 'bg-amber-900/20 border border-amber-800/30' : 'bg-slate-700/20'}`}>
+                  <div key={r.date} className={`grid grid-cols-5 items-center rounded px-2 py-1.5 text-xs ${r.estimated ? 'bg-amber-900/20 border border-amber-800/30' : 'bg-neutral-900'}`}>
                     <span className="text-slate-300 font-medium flex items-center gap-1">
                       {r.month}
                       {r.estimated && (
                         <span className="text-amber-400 text-xs font-bold" title="Estimated - market masked the ex-dividend drop. Will auto-update when confirmed.">est.</span>
                       )}
                     </span>
+                    <span className="text-slate-400 text-right">{r.paymentDate ? formatDateShort(r.paymentDate) : '—'}</span>
                     <span className="text-slate-400 text-right">
                       {(r.units ?? 0).toLocaleString('en-PH', { maximumFractionDigits: 2 })}
                     </span>
@@ -381,12 +407,12 @@ export default function DividendCard({ todayStr, buys = [] }) {
                   </div>
                 )
               })}
-              <div className="grid grid-cols-4 border-t border-slate-700 pt-2 px-2 text-xs">
-                <span className="text-slate-400 font-medium col-span-3">Total</span>
+              <div className="grid grid-cols-5 border-t border-neutral-800 pt-2 px-2 text-xs">
+                <span className="text-slate-400 font-medium col-span-4">Total</span>
                 <span className="text-emerald-400 font-black text-right">{fmtPeso(totalEarned)}</span>
               </div>
-              <div className="grid grid-cols-4 px-2 text-xs">
-                <span className="text-slate-600 col-span-3">Avg ₱/unit</span>
+              <div className="grid grid-cols-5 px-2 text-xs">
+                <span className="text-slate-600 col-span-4">Avg ₱/unit</span>
                 <span className="text-slate-500 text-right">₱{avgDivPerUnit.toFixed(4)}</span>
               </div>
             </div>
@@ -413,7 +439,7 @@ export default function DividendCard({ todayStr, buys = [] }) {
 
       {/* Last record footer */}
       {lastPast && (
-        <div className="border-t border-slate-700/60 pt-3 flex justify-between items-center">
+        <div className="border-t border-neutral-800/60 pt-3 flex justify-between items-center">
           <p className="text-slate-600 text-xs">Last record</p>
           <p className="text-slate-500 text-xs">{formatDateShort(lastPast.date)} · {daysSinceRecord}d ago</p>
         </div>

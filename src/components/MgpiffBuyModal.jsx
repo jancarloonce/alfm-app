@@ -62,6 +62,7 @@ export default function MgpiffBuyModal({
   const [navpu, setNavpu] = useState(String(defaultNavpu))
   const [overrideUnits, setOverrideUnits] = useState(false)
   const [manualUnits, setManualUnits] = useState('')
+  const [isPending, setIsPending] = useState(true)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [success, setSuccess] = useState(false)
@@ -101,6 +102,7 @@ export default function MgpiffBuyModal({
         navpu: parsedNavpu,
         isDividendBuy: todaySignal?.isDividendBuy || false,
         bucket: todaySignal?.bucket || null,
+        isPending,
         date: date || null,
       }
       if (overrideUnits && parseFloat(manualUnits) > 0) {
@@ -133,12 +135,12 @@ export default function MgpiffBuyModal({
 
   return (
     <div
-      className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+      className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
       onClick={handleBackdrop}
     >
-      <div className="bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+      <div className="bg-neutral-900 border border-neutral-800 rounded-lg w-full max-w-lg max-h-[90vh] overflow-y-auto">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-800">
           <h2 className="text-lg font-bold text-white">Record a Buy — MGPIFF</h2>
           <button
             onClick={onClose}
@@ -153,7 +155,7 @@ export default function MgpiffBuyModal({
         <div className="px-6 py-5 space-y-5">
           {/* Today's signal context */}
           {todaySignal && (
-            <div className="bg-slate-700/50 border border-slate-600 rounded-xl p-4">
+            <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4">
               <p className="text-slate-400 text-xs font-medium mb-1">Today's Signal</p>
               <div className="flex items-center gap-3">
                 <span
@@ -202,7 +204,7 @@ export default function MgpiffBuyModal({
                   value={date}
                   max={todayStr || new Date().toISOString().slice(0, 10)}
                   onChange={(e) => setDate(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-3 text-white font-bold focus:outline-none focus:border-emerald-500 transition-colors"
+                  className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-4 py-3 text-white font-bold focus:outline-none focus:border-emerald-500 transition-colors"
                 />
                 {date !== (todayStr || new Date().toISOString().slice(0, 10)) && (
                   <p className="text-amber-400 text-xs mt-1">
@@ -218,6 +220,28 @@ export default function MgpiffBuyModal({
                 )}
               </div>
 
+              {/* Pending Buy toggle */}
+              <div className="flex items-center justify-between bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-3">
+                <div>
+                  <p className="text-white text-sm font-medium">Pending Buy</p>
+                  <p className="text-slate-400 text-xs mt-0.5">
+                    NAVPU not yet confirmed — uses latest as estimate
+                  </p>
+                </div>
+                <button
+                  onClick={() => setIsPending((v) => !v)}
+                  className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${
+                    isPending ? 'bg-amber-500' : 'bg-slate-600'
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${
+                      isPending ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
               {/* Amount input */}
               <div>
                 <label className="block text-slate-400 text-xs font-medium mb-1.5">
@@ -229,7 +253,7 @@ export default function MgpiffBuyModal({
                     type="number"
                     value={amount}
                     onChange={(e) => setAmount(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-600 rounded-lg pl-7 pr-4 py-3 text-white text-lg font-bold focus:outline-none focus:border-emerald-500 transition-colors"
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-lg pl-7 pr-4 py-3 text-white text-lg font-bold focus:outline-none focus:border-emerald-500 transition-colors"
                     placeholder="2500"
                     min="0"
                     step="500"
@@ -252,7 +276,7 @@ export default function MgpiffBuyModal({
               {/* NAVPU input */}
               <div>
                 <label className="block text-slate-400 text-xs font-medium mb-1.5">
-                  NAVPU (₱)
+                  NAVPU (₱){isPending && <span className="text-amber-400 ml-1">(estimated)</span>}
                 </label>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold">₱</span>
@@ -260,12 +284,18 @@ export default function MgpiffBuyModal({
                     type="number"
                     value={navpu}
                     onChange={(e) => setNavpu(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-600 rounded-lg pl-7 pr-4 py-3 text-white text-lg font-bold focus:outline-none focus:border-emerald-500 transition-colors"
+                    className={`w-full bg-neutral-950 border rounded-lg pl-7 pr-4 py-3 text-white text-lg font-bold focus:outline-none transition-colors ${
+                      isPending ? 'border-amber-600 focus:border-amber-500' : 'border-neutral-800 focus:border-emerald-500'
+                    }`}
                     placeholder="1.0000"
                     step="0.0001"
                   />
                 </div>
-                {todayNavpu && (
+                {isPending ? (
+                  <p className="text-amber-400 text-xs mt-1">
+                    Estimated — will confirm when actual NAVPU is published
+                  </p>
+                ) : todayNavpu ? (
                   <p className="text-slate-500 text-xs mt-1">
                     Today's NAVPU: ₱{todayNavpu.toFixed(4)}
                     {' '}·{' '}
@@ -276,7 +306,7 @@ export default function MgpiffBuyModal({
                       Use today's
                     </button>
                   </p>
-                )}
+                ) : null}
               </div>
 
               {/* Units override */}
@@ -290,7 +320,7 @@ export default function MgpiffBuyModal({
                     className={`text-xs px-2 py-0.5 rounded border transition-colors ${
                       overrideUnits
                         ? 'bg-amber-900/50 border-amber-600 text-amber-300'
-                        : 'bg-slate-700 border-slate-600 text-slate-400 hover:text-slate-300'
+                        : 'bg-neutral-800/50 border-neutral-800 text-slate-400 hover:text-slate-300'
                     }`}
                   >
                     {overrideUnits ? 'Manual' : 'Auto'}
@@ -301,12 +331,12 @@ export default function MgpiffBuyModal({
                     type="number"
                     value={manualUnits}
                     onChange={(e) => setManualUnits(e.target.value)}
-                    className="w-full bg-slate-900 border border-amber-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-amber-500 transition-colors"
+                    className="w-full bg-neutral-950 border border-amber-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-amber-500 transition-colors"
                     placeholder={`Calculated: ${(parsedNavpu > 0 ? parsedAmount / parsedNavpu : 0).toFixed(4)}`}
                     step="0.0001"
                   />
                 ) : (
-                  <div className="bg-slate-900/50 border border-slate-700 rounded-lg px-4 py-3">
+                  <div className="bg-neutral-900 border border-neutral-800 rounded-lg px-4 py-3">
                     <p className="text-white font-bold">{fmt(calcUnitsBought, 4)} units</p>
                     <p className="text-slate-500 text-xs mt-0.5">= ₱{parsedAmount} ÷ ₱{parsedNavpu}</p>
                   </div>
@@ -314,8 +344,10 @@ export default function MgpiffBuyModal({
               </div>
 
               {/* Calculated summary */}
-              <div className="bg-slate-900/60 border border-slate-700 rounded-xl p-4 space-y-2">
-                <p className="text-slate-400 text-xs font-medium mb-3">Position Preview</p>
+              <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 space-y-2">
+                <p className="text-slate-400 text-xs font-medium mb-3">
+                  Position Preview{isPending && <span className="text-amber-400 ml-1">(estimated)</span>}
+                </p>
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
@@ -354,14 +386,14 @@ export default function MgpiffBuyModal({
               <div className="flex gap-3 pt-1">
                 <button
                   onClick={onClose}
-                  className="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-300 font-medium py-3 rounded-xl transition-colors"
+                  className="flex-1 bg-neutral-800 hover:bg-neutral-700 text-slate-300 font-medium py-3 rounded-xl transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleSubmit}
                   disabled={loading || parsedAmount <= 0 || parsedNavpu <= 0}
-                  className="flex-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 disabled:text-slate-500 text-white font-bold py-3 px-6 rounded-xl transition-colors flex items-center justify-center gap-2 min-w-[140px]"
+                  className="flex-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-neutral-800/50 disabled:text-slate-500 text-white font-bold py-3 px-6 rounded-xl transition-colors flex items-center justify-center gap-2 min-w-[140px]"
                 >
                   {loading ? (
                     <>
@@ -372,7 +404,7 @@ export default function MgpiffBuyModal({
                       Recording...
                     </>
                   ) : (
-                    'Confirm Buy'
+                    isPending ? 'Record Pending Buy' : 'Confirm Buy'
                   )}
                 </button>
               </div>

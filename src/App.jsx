@@ -21,12 +21,18 @@ import BacktestCard from './components/BacktestCard'
 import BtcSignalCard from './components/BtcSignalCard'
 import BtcPositionCard from './components/BtcPositionCard'
 import BtcBuyModal from './components/BtcBuyModal'
-import BtcSellModal from './components/BtcSellModal'
 import BtcBacktestCard from './components/BtcBacktestCard'
+import BtcSellModal from './components/BtcSellModal'
 import BtcBuyLog from './components/BtcBuyLog'
+import BtcSellLog from './components/BtcSellLog'
 import BtcPriceChart from './components/BtcPriceChart'
 import MgpiffDividendCard from './components/MgpiffDividendCard'
 import MgpiffBuyModal from './components/MgpiffBuyModal'
+import BpibondDividendCard from './components/BpibondDividendCard'
+import BpibondBuyModal from './components/BpibondBuyModal'
+import MreitBuyModal from './components/MreitBuyModal'
+import MreitDividendCard from './components/MreitDividendCard'
+import PortfolioDashboard from './components/PortfolioDashboard'
 
 function getTodayPH() {
   const now = new Date()
@@ -47,7 +53,7 @@ function getCurrentMonthPH() {
 
 export default function App() {
   // ── Tab state ────────────────────────────────────────────────────────────────
-  const [activeTab, setActiveTab] = useState('alfm')  // 'alfm' | 'btc' | 'mgpiff'
+  const [activeTab, setActiveTab] = useState('overview')  // 'overview' | 'alfm' | 'btc' | 'mgpiff' | 'bpibond' | 'mreit' | 'tools'
 
   // ── ALFM state ───────────────────────────────────────────────────────────────
   const [todaySignal, setTodaySignal] = useState(null)
@@ -61,6 +67,10 @@ export default function App() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
+  // ── Dividend totals ───────────────────────────────────────────────────────────
+  const [alfmDividends, setAlfmDividends] = useState([])
+  const [mgpiffDividends, setMgpiffDividends] = useState([])
+
   // ── MGPIFF state ─────────────────────────────────────────────────────────────
   const [mgpiffSignal, setMgpiffSignal] = useState(null)
   const [mgpiffPosition, setMgpiffPosition] = useState(null)
@@ -72,12 +82,37 @@ export default function App() {
   const [showMgpiffBuyModal, setShowMgpiffBuyModal] = useState(false)
   const [mgpiffLoading, setMgpiffLoading] = useState(true)
 
+  // ── BPI Bond state ────────────────────────────────────────────────────────────
+  const [bpibondSignal, setBpibondSignal] = useState(null)
+  const [bpibondPosition, setBpibondPosition] = useState(null)
+  const [bpibondNavHistory, setBpibondNavHistory] = useState([])
+  const [bpibondBuys, setBpibondBuys] = useState([])
+  const [bpibondThresholds, setBpibondThresholds] = useState(null)
+  const [bpibondMonthlyBuyCount, setBpibondMonthlyBuyCount] = useState(0)
+  const [bpibondDividendBuyDone, setBpibondDividendBuyDone] = useState(false)
+  const [bpibondRspBuyDone, setBpibondRspBuyDone] = useState(false)
+  const [showBpibondBuyModal, setShowBpibondBuyModal] = useState(false)
+  const [bpibondLoading, setBpibondLoading] = useState(true)
+  const [bpibondDividends, setBpibondDividends] = useState([])
+
+  // ── MREIT state ──────────────────────────────────────────────────────────────
+  const [mreitSignal, setMreitSignal] = useState(null)
+  const [mreitPosition, setMreitPosition] = useState(null)
+  const [mreitNavHistory, setMreitNavHistory] = useState([])
+  const [mreitBuys, setMreitBuys] = useState([])
+  const [mreitThresholds, setMreitThresholds] = useState(null)
+  const [mreitMonthlyBuyCount, setMreitMonthlyBuyCount] = useState(0)
+  const [mreitDividendBuyDone, setMreitDividendBuyDone] = useState(false)
+  const [showMreitBuyModal, setShowMreitBuyModal] = useState(false)
+  const [mreitLoading, setMreitLoading] = useState(true)
+  const [mreitDividends, setMreitDividends] = useState([])
+
   // ── BTC state ────────────────────────────────────────────────────────────────
   const [btcSignal, setBtcSignal] = useState(null)
   const [btcPosition, setBtcPosition] = useState(null)
   const [btcMonthlySpentPhp, setBtcMonthlySpentPhp] = useState(0)
   const [btcBuys, setBtcBuys] = useState([])
-  const [btcTrades, setBtcTrades] = useState([])
+  const [btcSells, setBtcSells] = useState([])
   const [btcLoading, setBtcLoading] = useState(true)
   const [showBtcBuyModal, setShowBtcBuyModal] = useState(false)
   const [showBtcSellModal, setShowBtcSellModal] = useState(false)
@@ -207,11 +242,13 @@ export default function App() {
     return () => unsub()
   }, [currentMonthStr])
 
-  // BTC completed trades
+  // BTC sells
   useEffect(() => {
-    const q = query(collection(db, 'btc_trades'), orderBy('exitTimestamp', 'desc'))
+    const q = query(collection(db, 'btc_sells'), orderBy('createdAt', 'desc'))
     const unsub = onSnapshot(q, (snap) => {
-      setBtcTrades(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
+      setBtcSells(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
+    }, (err) => {
+      console.error('BTC sells listener error:', err)
     })
     return () => unsub()
   }, [])
@@ -268,6 +305,144 @@ export default function App() {
     return () => unsub()
   }, [])
 
+  // ── Dividend listeners ────────────────────────────────────────────────────────
+  useEffect(() => {
+    const q = query(collection(db, 'dividends'), orderBy('date', 'asc'))
+    const unsub = onSnapshot(q, (snap) => {
+      setAlfmDividends(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
+    })
+    return () => unsub()
+  }, [])
+
+  useEffect(() => {
+    const q = query(collection(db, 'mgpiff_dividends'), orderBy('date', 'asc'))
+    const unsub = onSnapshot(q, (snap) => {
+      setMgpiffDividends(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
+    })
+    return () => unsub()
+  }, [])
+
+  // ── BPI Bond listeners ────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'bpibond_signals', todayStr), (snap) => {
+      setBpibondSignal(snap.exists() ? { id: snap.id, ...snap.data() } : null)
+      setBpibondLoading(false)
+    }, () => setBpibondLoading(false))
+    return () => unsub()
+  }, [todayStr])
+
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'bpibond_position', 'current'), (snap) => {
+      setBpibondPosition(snap.exists() ? snap.data() : null)
+    })
+    return () => unsub()
+  }, [])
+
+  useEffect(() => {
+    const q = query(collection(db, 'bpibond_navpu_history'), orderBy('date', 'asc'))
+    const unsub = onSnapshot(q, (snap) => {
+      setBpibondNavHistory(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
+    })
+    return () => unsub()
+  }, [])
+
+  useEffect(() => {
+    const q = query(collection(db, 'bpibond_buys'), orderBy('createdAt', 'desc'))
+    const unsub = onSnapshot(q, (snap) => {
+      const data = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+      setBpibondBuys(data)
+      const thisMonth = data.filter((b) => b.monthYear === currentMonthStr)
+      const oppBuys = thisMonth.filter((b) => !b.isDividendBuy && !b.isRspBuy && b.bucket !== 'extreme_override')
+      const staggerSeen = new Set()
+      let oppCount = 0
+      for (const buy of oppBuys) {
+        if (buy.staggerEventDate) {
+          if (!staggerSeen.has(buy.staggerEventDate)) { staggerSeen.add(buy.staggerEventDate); oppCount++ }
+        } else { oppCount++ }
+      }
+      setBpibondMonthlyBuyCount(oppCount)
+      setBpibondDividendBuyDone(thisMonth.some((b) => b.isDividendBuy === true))
+      setBpibondRspBuyDone(thisMonth.some((b) => b.isRspBuy === true))
+    })
+    return () => unsub()
+  }, [currentMonthStr])
+
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'bpibond_config', 'thresholds'), (snap) => {
+      if (snap.exists()) setBpibondThresholds(snap.data())
+    })
+    return () => unsub()
+  }, [])
+
+  useEffect(() => {
+    const q = query(collection(db, 'bpibond_dividends'), orderBy('date', 'asc'))
+    const unsub = onSnapshot(q, (snap) => {
+      setBpibondDividends(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
+    })
+    return () => unsub()
+  }, [])
+
+  // ── MREIT listeners ──────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'mreit_signals', todayStr), (snap) => {
+      setMreitSignal(snap.exists() ? { id: snap.id, ...snap.data() } : null)
+      setMreitLoading(false)
+    }, () => setMreitLoading(false))
+    return () => unsub()
+  }, [todayStr])
+
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'mreit_position', 'current'), (snap) => {
+      setMreitPosition(snap.exists() ? snap.data() : null)
+    })
+    return () => unsub()
+  }, [])
+
+  useEffect(() => {
+    const q = query(collection(db, 'mreit_navpu_history'), orderBy('date', 'asc'))
+    const unsub = onSnapshot(q, (snap) => {
+      setMreitNavHistory(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
+    })
+    return () => unsub()
+  }, [])
+
+  useEffect(() => {
+    const q = query(collection(db, 'mreit_buys'), orderBy('createdAt', 'desc'))
+    const unsub = onSnapshot(q, (snap) => {
+      const data = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+      setMreitBuys(data)
+      const thisMonth = data.filter((b) => b.monthYear === currentMonthStr)
+      const oppBuys = thisMonth.filter((b) => !b.isDividendBuy && b.bucket !== 'extreme_override')
+      const staggerSeen = new Set()
+      let oppCount = 0
+      for (const buy of oppBuys) {
+        if (buy.staggerEventDate) {
+          if (!staggerSeen.has(buy.staggerEventDate)) { staggerSeen.add(buy.staggerEventDate); oppCount++ }
+        } else { oppCount++ }
+      }
+      setMreitMonthlyBuyCount(oppCount)
+      setMreitDividendBuyDone(thisMonth.some((b) => b.isDividendBuy === true))
+    })
+    return () => unsub()
+  }, [currentMonthStr])
+
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'mreit_config', 'thresholds'), (snap) => {
+      if (snap.exists()) setMreitThresholds(snap.data())
+    })
+    return () => unsub()
+  }, [])
+
+  useEffect(() => {
+    const q = query(collection(db, 'mreit_dividends'), orderBy('date', 'asc'))
+    const unsub = onSnapshot(q, (snap) => {
+      setMreitDividends(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
+    })
+    return () => unsub()
+  }, [])
+
   // Use most recent available NAVPU (published with 1-day lag, stored under effective date)
   // Filter out null-navpu docs written by failed scrape runs so they don't poison the latest value
   const sortedHistory = [...navHistory].filter((n) => n.navpu != null).sort((a, b) => a.date.localeCompare(b.date))
@@ -291,8 +466,8 @@ export default function App() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <div className="text-slate-400 text-lg animate-pulse">Loading Investment Tracker...</div>
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-neutral-500 text-sm animate-pulse">Loading...</div>
       </div>
     )
   }
@@ -301,69 +476,92 @@ export default function App() {
   const btcCurrentPrice = btcSignal?.currentPrice ?? null
 
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-100">
+    <div className="min-h-screen">
       {/* Header */}
-      <header className="bg-slate-800 border-b border-slate-700 px-6 py-4">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-white tracking-tight">
+      <header className="sticky top-0 z-30 bg-[#0a0a0a] border-b border-neutral-800">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6">
+          <div className="flex items-center justify-between h-14">
+            <h1 className="text-sm font-semibold text-neutral-100 tracking-tight">
               Investment Tracker
             </h1>
-            <p className="text-slate-400 text-sm mt-0.5">
-              {activeTab === 'alfm'
-                ? 'ALFM Global Multi-Asset Income Fund (PHP)'
-                : activeTab === 'mgpiff'
-                ? 'Manulife Global Preferred Income Feeder Fund'
-                : 'Bitcoin — Hourly DCA Signal Engine'}
-            </p>
-          </div>
-          <div className="flex items-center gap-4">
-            {/* Tab switcher */}
-            <div className="flex bg-slate-700/60 rounded-lg p-1 gap-1">
-              <button
-                onClick={() => setActiveTab('alfm')}
-                className={`px-4 py-1.5 rounded-md text-sm font-semibold transition-all ${
-                  activeTab === 'alfm'
-                    ? 'bg-slate-600 text-white shadow'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                ALFMGMP
-              </button>
-              <button
-                onClick={() => setActiveTab('mgpiff')}
-                className={`px-4 py-1.5 rounded-md text-sm font-semibold transition-all flex items-center gap-1.5 ${
-                  activeTab === 'mgpiff'
-                    ? 'bg-blue-700 text-white shadow'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                MGPIFF
-                {mgpiffSignal?.isActionable && activeTab !== 'mgpiff' && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
-                )}
-              </button>
-              <button
-                onClick={() => setActiveTab('btc')}
-                className={`px-4 py-1.5 rounded-md text-sm font-semibold transition-all flex items-center gap-1.5 ${
-                  activeTab === 'btc'
-                    ? 'bg-orange-600 text-white shadow'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                ₿ BTC
-                {btcSignal?.isActionable && activeTab !== 'btc' && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse" />
-                )}
-              </button>
-            </div>
             <div className="text-right hidden sm:block">
-              <p className="text-slate-300 font-medium">{todayStr}</p>
-              <p className="text-slate-500 text-xs">Asia/Manila</p>
+              <p className="text-neutral-400 text-xs font-mono">{todayStr}</p>
             </div>
           </div>
+          {/* Tab navigation */}
+          <nav className="flex gap-1 -mb-px overflow-x-auto scrollbar-hide">
+            {[
+              { key: 'overview', label: 'Overview', color: 'neutral', fullName: null },
+              { key: 'alfm', label: 'ALFMGMP', color: 'emerald', signal: todaySignal?.isActionable, fullName: 'ALFM Global Multi-Asset Income Fund' },
+              { key: 'mgpiff', label: 'MGPIFF', color: 'blue', signal: mgpiffSignal?.isActionable, fullName: 'Manulife Global Preferred Income Fund Feeder Fund' },
+              { key: 'bpibond', label: 'BPIGBIF', color: 'violet', signal: bpibondSignal?.isActionable, fullName: 'BPI Global Bond Income Fund Class P (PHP Class)' },
+              { key: 'mreit', label: 'MREIT', color: 'amber', signal: mreitSignal?.isActionable, fullName: 'Manulife Global REIT Feeder Fund PhP-Unhedged' },
+              { key: 'btc', label: 'BTC', color: 'orange', signal: btcSignal?.isActionable, fullName: 'Bitcoin' },
+            ].map(({ key, label, color, signal, fullName }) => (
+              <button
+                key={key}
+                onClick={() => setActiveTab(key)}
+                className={`relative px-3 py-2.5 text-xs font-medium transition-colors whitespace-nowrap ${
+                  activeTab === key
+                    ? 'text-neutral-100 border-b-2 border-neutral-100'
+                    : 'text-neutral-500 hover:text-neutral-300 border-b-2 border-transparent'
+                }`}
+                title={fullName || label}
+              >
+                {label}
+                {signal && activeTab !== key && (
+                  <span className={`ml-1.5 inline-block w-1.5 h-1.5 rounded-full bg-${color}-400 animate-pulse`} />
+                )}
+              </button>
+            ))}
+          </nav>
         </div>
       </header>
+
+      {/* Fund name subtitle */}
+      {activeTab !== 'overview' && (() => {
+        const FUND_NAMES = {
+          alfm: 'ALFM Global Multi-Asset Income Fund',
+          mgpiff: 'Manulife Global Preferred Income Fund Feeder Fund',
+          bpibond: 'BPI Global Bond Income Fund Class P (PHP Class)',
+          mreit: 'Manulife Global REIT Feeder Fund PhP-Unhedged',
+          btc: 'Bitcoin',
+        }
+        return FUND_NAMES[activeTab] ? (
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-4 pb-0">
+            <p className="text-slate-500 text-xs">{FUND_NAMES[activeTab]}</p>
+          </div>
+        ) : null
+      })()}
+
+      {/* ── Overview Tab ──────────────────────────────────────────────────────── */}
+      {activeTab === 'overview' && (
+        <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
+          <PortfolioDashboard
+            alfmPosition={position}
+            alfmNavpu={todayNavpu}
+            mgpiffPosition={mgpiffPosition}
+            mgpiffNavpu={mgpiffNavHistory.length > 0 ? mgpiffNavHistory.filter(n => n.navpu != null).at(-1)?.navpu : null}
+            bpibondPosition={bpibondPosition}
+            bpibondNavpu={bpibondNavHistory.length > 0 ? bpibondNavHistory.filter(n => n.navpu != null).at(-1)?.navpu : null}
+            mreitPosition={mreitPosition}
+            mreitNavpu={mreitNavHistory.length > 0 ? mreitNavHistory.filter(n => n.navpu != null).at(-1)?.navpu : null}
+            btcPosition={btcPosition}
+            btcCurrentPrice={btcCurrentPrice}
+            btcSignal={btcSignal}
+            btcPhpPerUsd={btcSignal?.phpPerUsd ?? 57.5}
+            todaySignal={todaySignal}
+            mgpiffSignal={mgpiffSignal}
+            bpibondSignal={bpibondSignal}
+            mreitSignal={mreitSignal}
+            alfmDividends={alfmDividends}
+            mgpiffDividends={mgpiffDividends}
+            bpibondDividends={bpibondDividends}
+            mreitDividends={mreitDividends}
+            onNavigate={setActiveTab}
+          />
+        </main>
+      )}
 
       {/* ── ALFM Tab ──────────────────────────────────────────────────────────── */}
       {activeTab === 'alfm' && (
@@ -393,7 +591,7 @@ export default function App() {
           </div>
           <NavChart navHistory={last90} buys={buys} />
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <BuyLog buys={buys} />
+            <BuyLog buys={buys} fund="alfm" />
             <BacktestCard />
           </div>
         </main>
@@ -411,102 +609,31 @@ export default function App() {
               {/* Row 1: Signal card (full width) */}
               <BtcSignalCard signal={btcSignal} />
 
-              {/* Row 2: Position card + entry scanner */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <BtcPositionCard
-                  position={btcPosition}
-                  currentPriceUsd={btcCurrentPrice}
-                  monthlySpentPhp={btcMonthlySpentPhp}
-                  btcTrades={btcTrades}
-                />
-
-                {/* Entry Scanner */}
-                <div className="card md:col-span-2">
-                  <p className="label mb-4">Entry Scanner — Swing Trade</p>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                    {(() => {
-                      const s = btcSignal
-                      const change24h = s?.change24hPct ?? null
-                      const rsi       = s?.rsi ?? null
-                      const vol       = s?.volumeRatio ?? null
-                      const macro     = s?.macroMode ?? 'NORMAL'
-                      const change7d  = s?.change7dPct ?? null
-
-                      const drop24hOk = change24h != null && change24h <= -3 && change24h >= -8
-                      const rsiOk     = rsi != null && rsi < 35
-                      const volOk     = vol != null && vol >= 1.2
-                      const macroOk   = macro === 'NORMAL' || macro === 'REDUCED'
-
-                      const conditions = [
-                        {
-                          label: '24h Drop',
-                          value: change24h != null ? `${change24h >= 0 ? '+' : ''}${change24h.toFixed(2)}%` : '—',
-                          ok: drop24hOk,
-                          hint: drop24hOk ? 'In entry window' : change24h != null && change24h > -3 ? 'Need ≤ -3%' : 'Too extreme (>-8%)',
-                        },
-                        {
-                          label: 'RSI (1h)',
-                          value: rsi != null ? rsi.toFixed(1) : '—',
-                          ok: rsiOk,
-                          hint: rsiOk ? 'Oversold ✓' : `Need < 35`,
-                        },
-                        {
-                          label: 'Volume',
-                          value: vol != null ? `${vol.toFixed(2)}×` : '—',
-                          ok: volOk,
-                          hint: volOk ? 'Confirmed ✓' : 'Need ≥ 1.2×',
-                        },
-                        {
-                          label: '7d Change',
-                          value: change7d != null ? `${change7d >= 0 ? '+' : ''}${change7d.toFixed(1)}%` : '—',
-                          ok: change7d == null || change7d > -10,
-                          hint: change7d != null && change7d <= -10 ? 'Kill switch active' : 'No flush',
-                        },
-                        {
-                          label: 'Macro',
-                          value: macro,
-                          ok: macroOk,
-                          hint: macro === 'PAUSED' ? 'Entries paused' : macro === 'REDUCED' ? '50% size' : 'Full size',
-                        },
-                        {
-                          label: 'BTC Price',
-                          value: s?.currentPrice ? `$${Number(s.currentPrice).toLocaleString('en-US', { maximumFractionDigits: 0 })}` : '—',
-                          ok: null,
-                          hint: 'Current',
-                        },
-                      ]
-
-                      return conditions.map(({ label, value, ok, hint }) => (
-                        <div key={label} className={`rounded-lg p-3 border ${ok === true ? 'bg-emerald-900/20 border-emerald-800' : ok === false ? 'bg-slate-700/40 border-slate-600' : 'bg-slate-700/40 border-slate-600'}`}>
-                          <p className="label text-xs mb-1">{label}</p>
-                          <p className={`font-bold text-sm ${ok === true ? 'text-emerald-400' : ok === false ? 'text-slate-300' : 'text-white'}`}>
-                            {value}
-                          </p>
-                          <p className={`text-xs mt-0.5 ${ok === true ? 'text-emerald-600' : 'text-slate-600'}`}>{hint}</p>
-                        </div>
-                      ))
-                    })()}
-                  </div>
-                  <div className="mt-3 pt-3 border-t border-slate-700">
-                    <p className="text-slate-600 text-xs">
-                      Entry fires when: 24h drop -3% to -8% <span className="text-slate-700">·</span> RSI &lt; 35 <span className="text-slate-700">·</span> green/small candle <span className="text-slate-700">·</span> volume ≥ 1.2× <span className="text-slate-700">·</span> ≤ 2% off 24h low
-                    </p>
-                  </div>
-                </div>
-              </div>
+              {/* Row 2: Position card */}
+              <BtcPositionCard
+                position={btcPosition}
+                currentPriceUsd={btcCurrentPrice}
+                monthlySpentPhp={btcMonthlySpentPhp}
+                phpPerUsd={btcSignal?.phpPerUsd ?? 57.5}
+                totalRealizedPnlPhp={btcSells.reduce((sum, s) => sum + (s.realizedPnlPhp || 0), 0)}
+              />
 
               {/* Row 3: Price chart */}
               <BtcPriceChart
                 btcBuys={btcBuys}
                 thresholds={btcSignal?.thresholds ?? null}
                 avgCost={btcPosition?.avgCost ?? null}
+                phpPerUsd={btcSignal?.phpPerUsd ?? null}
               />
 
-              {/* Row 4: Buy log + backtest */}
+              {/* Row 4: Buy log + Sell log */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <BtcBuyLog buys={btcBuys} />
-                <BtcBacktestCard />
+                <BtcBuyLog buys={btcBuys} phpPerUsd={btcSignal?.phpPerUsd ?? null} />
+                <BtcSellLog sells={btcSells} phpPerUsd={btcSignal?.phpPerUsd ?? null} />
               </div>
+
+              {/* Row 5: Backtest */}
+              <BtcBacktestCard />
             </>
           )}
         </main>
@@ -550,7 +677,7 @@ export default function App() {
               </div>
               <NavChart navHistory={mgpiffNavHistory.slice(-90)} buys={mgpiffBuys} />
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <BuyLog buys={mgpiffBuys} />
+                <BuyLog buys={mgpiffBuys} fund="mgpiff" />
                 <BacktestCard
                   summaryCollection="mgpiff_config"
                   summaryDoc="backtest_summary"
@@ -562,11 +689,111 @@ export default function App() {
         </main>
       )}
 
+      {/* ── BPI Bond Tab ─────────────────────────────────────────────────────── */}
+      {activeTab === 'bpibond' && (
+        <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+          {bpibondLoading ? (
+            <div className="flex items-center justify-center py-16">
+              <p className="text-slate-400 animate-pulse">Loading BPI Bond signals...</p>
+            </div>
+          ) : (
+            <>
+              <SignalCard
+                signal={bpibondSignal}
+                todayNavpu={bpibondNavHistory.length > 0 ? bpibondNavHistory[bpibondNavHistory.length - 1]?.navpu : null}
+                dailyChange={bpibondSignal?.dailyChange ?? null}
+              />
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <PositionCard
+                  position={bpibondPosition}
+                  todayNavpu={bpibondNavHistory.length > 0 ? bpibondNavHistory[bpibondNavHistory.length - 1]?.navpu : null}
+                  monthlyBuyCount={bpibondMonthlyBuyCount}
+                  dividendBuyDone={bpibondDividendBuyDone}
+                  rspBuyDone={bpibondRspBuyDone}
+                />
+                <NavpuCard
+                  todayNavpu={bpibondNavHistory.length > 0 ? bpibondNavHistory[bpibondNavHistory.length - 1]?.navpu : null}
+                  navDate={bpibondNavHistory.length > 0 ? bpibondNavHistory[bpibondNavHistory.length - 1]?.date : null}
+                  dailyChange={bpibondSignal?.dailyChange ?? null}
+                  navHigh={bpibondNavHistory.length > 0 ? Math.max(...bpibondNavHistory.slice(-90).map(n => n.navpu).filter(Boolean)) : null}
+                  navLow={bpibondNavHistory.length > 0 ? Math.min(...bpibondNavHistory.slice(-90).map(n => n.navpu).filter(Boolean)) : null}
+                  navMean={bpibondNavHistory.length > 0 ? parseFloat((bpibondNavHistory.slice(-90).map(n => n.navpu).filter(Boolean).reduce((a, b) => a + b, 0) / bpibondNavHistory.slice(-90).filter(n => n.navpu).length).toFixed(4)) : null}
+                  thresholds={bpibondThresholds}
+                />
+                <BpibondDividendCard
+                  todayStr={todayStr}
+                  buys={bpibondBuys}
+                />
+              </div>
+              <NavChart navHistory={bpibondNavHistory.slice(-90)} buys={bpibondBuys} />
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <BuyLog buys={bpibondBuys} fund="bpibond" />
+                <BacktestCard
+                  summaryCollection="bpibond_config"
+                  summaryDoc="backtest_summary"
+                  resultsCollection="bpibond_backtest_results"
+                />
+              </div>
+            </>
+          )}
+        </main>
+      )}
+
+      {/* ── MREIT Tab ────────────────────────────────────────────────────────── */}
+      {activeTab === 'mreit' && (
+        <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+          {mreitLoading ? (
+            <div className="flex items-center justify-center py-16">
+              <p className="text-slate-400 animate-pulse">Loading MREIT signals...</p>
+            </div>
+          ) : (
+            <>
+              <SignalCard
+                signal={mreitSignal}
+                todayNavpu={mreitNavHistory.length > 0 ? mreitNavHistory[mreitNavHistory.length - 1]?.navpu : null}
+                dailyChange={mreitSignal?.dailyChange ?? null}
+              />
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <PositionCard
+                  position={mreitPosition}
+                  todayNavpu={mreitNavHistory.length > 0 ? mreitNavHistory[mreitNavHistory.length - 1]?.navpu : null}
+                  monthlyBuyCount={mreitMonthlyBuyCount}
+                  dividendBuyDone={mreitDividendBuyDone}
+                />
+                <NavpuCard
+                  todayNavpu={mreitNavHistory.length > 0 ? mreitNavHistory[mreitNavHistory.length - 1]?.navpu : null}
+                  navDate={mreitNavHistory.length > 0 ? mreitNavHistory[mreitNavHistory.length - 1]?.date : null}
+                  dailyChange={mreitSignal?.dailyChange ?? null}
+                  navHigh={mreitNavHistory.length > 0 ? Math.max(...mreitNavHistory.slice(-90).map(n => n.navpu).filter(Boolean)) : null}
+                  navLow={mreitNavHistory.length > 0 ? Math.min(...mreitNavHistory.slice(-90).map(n => n.navpu).filter(Boolean)) : null}
+                  navMean={mreitNavHistory.length > 0 ? parseFloat((mreitNavHistory.slice(-90).map(n => n.navpu).filter(Boolean).reduce((a, b) => a + b, 0) / mreitNavHistory.slice(-90).filter(n => n.navpu).length).toFixed(4)) : null}
+                  thresholds={mreitThresholds}
+                />
+                <MreitDividendCard
+                  todayStr={todayStr}
+                  buys={mreitBuys}
+                  currentNavpu={mreitNavHistory.length > 0 ? mreitNavHistory[mreitNavHistory.length - 1]?.navpu : null}
+                />
+              </div>
+              <NavChart navHistory={mreitNavHistory.slice(-90)} buys={mreitBuys} />
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <BuyLog buys={mreitBuys} fund="mreit" />
+                <BacktestCard
+                  summaryCollection="mreit_config"
+                  summaryDoc="backtest_summary"
+                  resultsCollection="mreit_backtest_results"
+                />
+              </div>
+            </>
+          )}
+        </main>
+      )}
+
       {/* Floating Buy Button — ALFM tab */}
       {activeTab === 'alfm' && (
         <button
           onClick={() => setShowBuyModal(true)}
-          className="fixed bottom-8 right-8 bg-emerald-500 hover:bg-emerald-400 text-white font-bold px-6 py-4 rounded-full shadow-2xl shadow-emerald-900/50 transition-all duration-200 hover:scale-105 active:scale-95 flex items-center gap-2 z-40"
+          className="fixed bottom-6 right-6 bg-emerald-600 hover:bg-emerald-500 text-white font-medium px-5 py-3 rounded-lg transition-colors flex items-center gap-2 z-40"
         >
           <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
             <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
@@ -575,26 +802,23 @@ export default function App() {
         </button>
       )}
 
-      {/* Floating buttons — BTC tab */}
+      {/* Floating Buttons — BTC tab */}
       {activeTab === 'btc' && (
-        <div className="fixed bottom-8 right-8 flex flex-col gap-3 z-40">
-          {(btcPosition?.state === 'BUILDING' || btcPosition?.state === 'FULL') ? (
-            <button
-              onClick={() => setShowBtcSellModal(true)}
-              className="bg-green-600 hover:bg-green-500 text-white font-bold px-6 py-4 rounded-full shadow-2xl shadow-green-900/50 transition-all duration-200 hover:scale-105 active:scale-95 flex items-center gap-2"
-            >
-              <span className="text-lg leading-none">₿</span>
-              I Sold
-            </button>
-          ) : (
-            <button
-              onClick={() => setShowBtcBuyModal(true)}
-              className="bg-orange-500 hover:bg-orange-400 text-white font-bold px-6 py-4 rounded-full shadow-2xl shadow-orange-900/50 transition-all duration-200 hover:scale-105 active:scale-95 flex items-center gap-2"
-            >
-              <span className="text-lg leading-none">₿</span>
-              I Bought
-            </button>
-          )}
+        <div className="fixed bottom-6 right-6 flex gap-2 z-40">
+          <button
+            onClick={() => setShowBtcSellModal(true)}
+            className="bg-neutral-800 hover:bg-neutral-700 text-neutral-200 font-medium px-4 py-3 rounded-lg border border-neutral-700 transition-colors flex items-center gap-2"
+          >
+            <span className="text-lg leading-none">₿</span>
+            I Sold
+          </button>
+          <button
+            onClick={() => setShowBtcBuyModal(true)}
+            className="bg-orange-600 hover:bg-orange-500 text-white font-medium px-4 py-3 rounded-lg transition-colors flex items-center gap-2"
+          >
+            <span className="text-lg leading-none">₿</span>
+            I Bought
+          </button>
         </div>
       )}
 
@@ -602,7 +826,33 @@ export default function App() {
       {activeTab === 'mgpiff' && (
         <button
           onClick={() => setShowMgpiffBuyModal(true)}
-          className="fixed bottom-8 right-8 bg-blue-600 hover:bg-blue-500 text-white font-bold px-6 py-4 rounded-full shadow-2xl shadow-blue-900/50 transition-all duration-200 hover:scale-105 active:scale-95 flex items-center gap-2 z-40"
+          className="fixed bottom-6 right-6 bg-blue-600 hover:bg-blue-500 text-white font-medium px-5 py-3 rounded-lg transition-colors flex items-center gap-2 z-40"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
+          </svg>
+          I Bought
+        </button>
+      )}
+
+      {/* Floating Buy Button — BPI Bond tab */}
+      {activeTab === 'bpibond' && (
+        <button
+          onClick={() => setShowBpibondBuyModal(true)}
+          className="fixed bottom-6 right-6 bg-violet-600 hover:bg-violet-500 text-white font-medium px-5 py-3 rounded-lg transition-colors flex items-center gap-2 z-40"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
+          </svg>
+          I Bought
+        </button>
+      )}
+
+      {/* Floating Buy Button — MREIT tab */}
+      {activeTab === 'mreit' && (
+        <button
+          onClick={() => setShowMreitBuyModal(true)}
+          className="fixed bottom-6 right-6 bg-amber-600 hover:bg-amber-500 text-white font-medium px-5 py-3 rounded-lg transition-colors flex items-center gap-2 z-40"
         >
           <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
             <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
@@ -633,6 +883,15 @@ export default function App() {
         />
       )}
 
+      {/* BTC Sell Modal */}
+      {showBtcSellModal && (
+        <BtcSellModal
+          onClose={() => setShowBtcSellModal(false)}
+          btcPosition={btcPosition}
+          currentPriceUsd={btcCurrentPrice}
+        />
+      )}
+
       {/* MGPIFF Buy Modal */}
       {showMgpiffBuyModal && (
         <MgpiffBuyModal
@@ -645,14 +904,30 @@ export default function App() {
         />
       )}
 
-      {/* BTC Sell Modal */}
-      {showBtcSellModal && (
-        <BtcSellModal
-          onClose={() => setShowBtcSellModal(false)}
-          btcPosition={btcPosition}
-          currentPriceUsd={btcCurrentPrice}
+      {/* BPI Bond Buy Modal */}
+      {showBpibondBuyModal && (
+        <BpibondBuyModal
+          onClose={() => setShowBpibondBuyModal(false)}
+          todaySignal={bpibondSignal}
+          todayNavpu={bpibondNavHistory.length > 0 ? bpibondNavHistory[bpibondNavHistory.length - 1]?.navpu : null}
+          position={bpibondPosition}
+          todayStr={todayStr}
+          currentMonthStr={currentMonthStr}
         />
       )}
+
+      {/* MREIT Buy Modal */}
+      {showMreitBuyModal && (
+        <MreitBuyModal
+          onClose={() => setShowMreitBuyModal(false)}
+          todaySignal={mreitSignal}
+          todayNavpu={mreitNavHistory.length > 0 ? mreitNavHistory[mreitNavHistory.length - 1]?.navpu : null}
+          position={mreitPosition}
+          todayStr={todayStr}
+          currentMonthStr={currentMonthStr}
+        />
+      )}
+
     </div>
   )
 }

@@ -26,9 +26,9 @@ const SIGNAL_COLORS = {
   AGGRESSIVE: 'bg-emerald-900 text-emerald-300',
   PRIORITY_BUY: 'bg-emerald-800 text-emerald-200',
   WATCH: 'bg-yellow-900 text-yellow-300',
-  NO_BUY: 'bg-slate-700 text-slate-400',
-  WATCH_SKIP: 'bg-slate-700 text-slate-400',
-  NO_SECOND_BUY: 'bg-slate-700 text-slate-400',
+  NO_BUY: 'bg-neutral-800 text-slate-400',
+  WATCH_SKIP: 'bg-neutral-800 text-slate-400',
+  NO_SECOND_BUY: 'bg-neutral-800 text-slate-400',
   MONTHLY_CAP: 'bg-red-900 text-red-300',
   OPP_LOCKED: 'bg-orange-900 text-orange-300',
   OPP_GAP_WAIT: 'bg-amber-900 text-amber-300',
@@ -102,7 +102,7 @@ export default function BacktestCard({
       </div>
 
       {/* Overall score */}
-      <div className="bg-slate-700/50 rounded-lg p-4 mb-4 text-center">
+      <div className="bg-neutral-800/50 rounded-lg p-4 mb-4 text-center">
         <p className="text-slate-400 text-xs mb-1">Signal Accuracy (15-day window)</p>
         <p className={`text-4xl font-black ${pctColor(summary.pctPositiveReturn15d)}`}>
           {summary.pctPositiveReturn15d != null ? `${summary.pctPositiveReturn15d}%` : '-'}
@@ -113,7 +113,7 @@ export default function BacktestCard({
       </div>
 
       {/* Average returns */}
-      <div className="border-t border-slate-700 pt-3 mb-4">
+      <div className="border-t border-neutral-800 pt-3 mb-4">
         <p className="label text-xs mb-2">Avg Return After Buy Signal</p>
         <div className="grid grid-cols-5 gap-2">
           {[
@@ -134,22 +134,22 @@ export default function BacktestCard({
       </div>
 
       {/* Medium-term win rates */}
-      <div className="border-t border-slate-700 pt-3 mb-4">
+      <div className="border-t border-neutral-800 pt-3 mb-4">
         <p className="label text-xs mb-2">Win Rate (Price Higher After)</p>
         <div className="grid grid-cols-3 gap-3">
-          <div className="bg-slate-700/40 rounded-lg p-3 text-center">
+          <div className="bg-neutral-900 rounded-lg p-3 text-center">
             <p className={`text-xl font-bold ${pctColor(summary.pctPositiveReturn3d)}`}>
               {summary.pctPositiveReturn3d != null ? `${summary.pctPositiveReturn3d}%` : '-'}
             </p>
             <p className="text-slate-500 text-xs mt-1">3 days</p>
           </div>
-          <div className="bg-slate-700/40 rounded-lg p-3 text-center">
+          <div className="bg-neutral-900 rounded-lg p-3 text-center">
             <p className={`text-xl font-bold ${pctColor(summary.pctPositiveReturn15d)}`}>
               {summary.pctPositiveReturn15d != null ? `${summary.pctPositiveReturn15d}%` : '-'}
             </p>
             <p className="text-slate-500 text-xs mt-1">15 days</p>
           </div>
-          <div className="bg-slate-700/40 rounded-lg p-3 text-center">
+          <div className="bg-neutral-900 rounded-lg p-3 text-center">
             <p className={`text-xl font-bold ${pctColor(summary.pctPositiveReturn30d)}`}>
               {summary.pctPositiveReturn30d != null ? `${summary.pctPositiveReturn30d}%` : '-'}
             </p>
@@ -160,7 +160,7 @@ export default function BacktestCard({
 
       {/* Win rate by bucket */}
       {summary.bucketWinRates && (
-        <div className="border-t border-slate-700 pt-3 mb-4">
+        <div className="border-t border-neutral-800 pt-3 mb-4">
           <p className="label text-xs mb-2">15d Win Rate by Bucket</p>
           <div className="space-y-1.5">
             {[
@@ -187,7 +187,7 @@ export default function BacktestCard({
       )}
 
       {/* NO_BUY effectiveness */}
-      <div className="border-t border-slate-700 pt-3 mb-4">
+      <div className="border-t border-neutral-800 pt-3 mb-4">
         <div className="flex justify-between items-center">
           <div>
             <p className="text-slate-400 text-sm font-medium">NO_BUY Effectiveness</p>
@@ -203,7 +203,7 @@ export default function BacktestCard({
 
       {/* Best / Worst */}
       {(summary.bestSignal || summary.worstSignal) && (
-        <div className="border-t border-slate-700 pt-3 mb-4 grid grid-cols-2 gap-3">
+        <div className="border-t border-neutral-800 pt-3 mb-4 grid grid-cols-2 gap-3">
           {summary.bestSignal && (
             <div>
               <p className="text-slate-500 text-xs mb-1">Best Signal</p>
@@ -224,17 +224,17 @@ export default function BacktestCard({
       )}
 
       {/* Signal breakdown */}
-      <div className="border-t border-slate-700 pt-3 mb-4">
+      <div className="border-t border-neutral-800 pt-3 mb-4">
         <p className="label text-xs mb-2">Signal Distribution ({summary.totalDays} days)</p>
         <div className="space-y-1">
           {Object.entries(summary.signalBreakdown || {})
             .sort((a, b) => b[1] - a[1])
             .map(([signal, count]) => (
               <div key={signal} className="flex items-center gap-2">
-                <span className={`text-xs px-2 py-0.5 rounded font-medium ${SIGNAL_COLORS[signal] || 'bg-slate-700 text-slate-300'}`}>
+                <span className={`text-xs px-2 py-0.5 rounded font-medium ${SIGNAL_COLORS[signal] || 'bg-neutral-800 text-slate-300'}`}>
                   {signal.replace(/_/g, ' ')}
                 </span>
-                <div className="flex-1 bg-slate-700 rounded-full h-1.5">
+                <div className="flex-1 bg-neutral-800 rounded-full h-1.5">
                   <div
                     className="bg-slate-400 h-1.5 rounded-full"
                     style={{ width: `${(count / summary.totalDays) * 100}%` }}
@@ -248,7 +248,7 @@ export default function BacktestCard({
 
       {/* Buy timing distribution */}
       {summary.buyDayDistribution && (
-        <div className="border-t border-slate-700 pt-3 mb-4">
+        <div className="border-t border-neutral-800 pt-3 mb-4">
           <p className="label text-xs mb-1">Buy Timing Distribution</p>
           <p className="text-slate-600 text-xs mb-2">Which week of the month do actionable signals fire?</p>
           <div className="space-y-1.5">
@@ -262,7 +262,7 @@ export default function BacktestCard({
               return (
                 <div key={week} className="flex items-center gap-2">
                   <span className="text-slate-400 text-xs w-28 shrink-0">{week}</span>
-                  <div className="flex-1 bg-slate-700 rounded-full h-2">
+                  <div className="flex-1 bg-neutral-800 rounded-full h-2">
                     <div
                       className={`h-2 rounded-full ${isHeavy ? 'bg-amber-400' : 'bg-slate-400'}`}
                       style={{ width: `${pct}%` }}
@@ -280,7 +280,7 @@ export default function BacktestCard({
 
       {/* Week 1 bucket breakdown */}
       {summary.week1BucketBreakdown && summary.week1BucketBreakdown.total > 0 && (
-        <div className="border-t border-slate-700 pt-3 mb-4">
+        <div className="border-t border-neutral-800 pt-3 mb-4">
           <p className="label text-xs mb-1">Week 1 Composition</p>
           <p className="text-slate-600 text-xs mb-2">What's driving the Week 1 concentration?</p>
           <div className="space-y-1">
@@ -295,7 +295,7 @@ export default function BacktestCard({
               return (
                 <div key={key} className="flex items-center gap-2">
                   <span className={`text-xs w-32 shrink-0 font-medium ${color}`}>{label}</span>
-                  <div className="flex-1 bg-slate-700 rounded-full h-1.5">
+                  <div className="flex-1 bg-neutral-800 rounded-full h-1.5">
                     <div className="bg-slate-400 h-1.5 rounded-full" style={{ width: `${pct}%` }} />
                   </div>
                   <span className="text-slate-400 text-xs w-14 text-right">{count} ({pct.toFixed(0)}%)</span>
@@ -308,11 +308,11 @@ export default function BacktestCard({
 
       {/* Sharpe / Drawdown / Consecutive Losses */}
       {(summary.sharpeRatio || summary.drawdown || summary.consecutiveLosses) && (
-        <div className="border-t border-slate-700 pt-3 mb-4">
+        <div className="border-t border-neutral-800 pt-3 mb-4">
           <p className="label text-xs mb-2">Risk Metrics</p>
           <div className="grid grid-cols-3 gap-2">
             {summary.sharpeRatio && (
-              <div className="bg-slate-800/60 rounded-lg p-2.5 text-center">
+              <div className="bg-neutral-900 rounded-lg p-2.5 text-center">
                 <p className="text-slate-500 text-xs mb-1">Sharpe (3d)</p>
                 <p className={`text-base font-bold ${
                   summary.sharpeRatio.interpretation === 'NEGATIVE' ? 'text-red-400' :
@@ -326,7 +326,7 @@ export default function BacktestCard({
               </div>
             )}
             {summary.drawdown && (
-              <div className="bg-slate-800/60 rounded-lg p-2.5 text-center">
+              <div className="bg-neutral-900 rounded-lg p-2.5 text-center">
                 <p className="text-slate-500 text-xs mb-1">Max Drawdown</p>
                 <p className={`text-base font-bold ${
                   summary.drawdown.maxDrawdownPct < 10 ? 'text-green-400' :
@@ -339,7 +339,7 @@ export default function BacktestCard({
               </div>
             )}
             {summary.consecutiveLosses && (
-              <div className="bg-slate-800/60 rounded-lg p-2.5 text-center">
+              <div className="bg-neutral-900 rounded-lg p-2.5 text-center">
                 <p className="text-slate-500 text-xs mb-1">Max Loss Streak</p>
                 <p className={`text-base font-bold ${
                   summary.consecutiveLosses.maxConsecutiveLosses <= 3 ? 'text-green-400' :
@@ -358,7 +358,7 @@ export default function BacktestCard({
       {/* Detailed results toggle */}
       <button
         onClick={() => setShowTable((v) => !v)}
-        className="w-full text-center text-slate-500 hover:text-slate-300 text-xs py-2 border border-slate-700 rounded transition-colors"
+        className="w-full text-center text-slate-500 hover:text-slate-300 text-xs py-2 border border-neutral-800 rounded transition-colors"
       >
         {showTable ? 'Hide' : 'Show'} day-by-day results
       </button>
@@ -367,7 +367,7 @@ export default function BacktestCard({
         <div className="mt-3 overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
-              <tr className="text-slate-500 border-b border-slate-700">
+              <tr className="text-slate-500 border-b border-neutral-800">
                 <th className="text-left py-1 pr-2">Date</th>
                 <th className="text-left py-1 pr-2">NAVPU</th>
                 <th className="text-left py-1 pr-2">Signal</th>
@@ -378,7 +378,7 @@ export default function BacktestCard({
             </thead>
             <tbody>
               {results.filter((r) => r.isActionable || r.signal === 'NO_BUY').map((r) => (
-                <tr key={r.date} className="border-b border-slate-800 hover:bg-slate-800/40">
+                <tr key={r.date} className="border-b border-neutral-800 hover:bg-neutral-900">
                   <td className="py-1 pr-2 text-slate-400">{r.date}</td>
                   <td className="py-1 pr-2 text-slate-300">₱{fmt(r.navpu)}</td>
                   <td className="py-1 pr-2">

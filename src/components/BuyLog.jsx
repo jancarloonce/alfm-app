@@ -83,7 +83,7 @@ function EditNavpuCell({ buy, onDone }) {
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false) }}
-        className="w-20 bg-slate-900 border border-emerald-500 rounded px-1.5 py-0.5 text-white text-sm focus:outline-none"
+        className="w-20 bg-neutral-950 border border-emerald-500 rounded px-1.5 py-0.5 text-white text-sm focus:outline-none"
       />
       <button
         onClick={save}
@@ -94,7 +94,7 @@ function EditNavpuCell({ buy, onDone }) {
       </button>
       <button
         onClick={() => setEditing(false)}
-        className="text-xs px-1.5 py-0.5 rounded bg-slate-700 hover:bg-slate-600 text-slate-300"
+        className="text-xs px-1.5 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-slate-300"
       >
         ✕
       </button>
@@ -103,7 +103,71 @@ function EditNavpuCell({ buy, onDone }) {
   )
 }
 
-export default function BuyLog({ buys }) {
+function ConfirmNavpuCell({ buy, fund, onDone }) {
+  const [editing, setEditing] = useState(false)
+  const [value, setValue] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState(null)
+
+  const confirm = async () => {
+    const parsed = parseFloat(value)
+    if (!parsed || parsed <= 0) { setErr('Invalid'); return }
+    setSaving(true)
+    setErr(null)
+    try {
+      const fn = httpsCallable(functions, 'confirmPendingBuy')
+      await fn({ buyId: buy.id, actualNavpu: parsed, fund })
+      setEditing(false)
+      onDone?.()
+    } catch (e) {
+      setErr(e.message || 'Failed')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!editing) {
+    return (
+      <button
+        onClick={() => setEditing(true)}
+        className="px-2 py-0.5 rounded-full text-xs font-medium bg-amber-900/40 border border-amber-600 text-amber-300 hover:bg-amber-900/60 transition-colors"
+      >
+        Pending
+      </button>
+    )
+  }
+
+  return (
+    <span className="flex items-center gap-1">
+      <input
+        autoFocus
+        type="number"
+        step="0.01"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') confirm(); if (e.key === 'Escape') setEditing(false) }}
+        placeholder="Actual NAVPU"
+        className="w-20 bg-neutral-950 border border-amber-500 rounded px-1.5 py-0.5 text-white text-sm focus:outline-none"
+      />
+      <button
+        onClick={confirm}
+        disabled={saving}
+        className="text-xs px-1.5 py-0.5 rounded bg-amber-700 hover:bg-amber-600 text-white disabled:opacity-50"
+      >
+        {saving ? '…' : 'OK'}
+      </button>
+      <button
+        onClick={() => setEditing(false)}
+        className="text-xs px-1.5 py-0.5 rounded bg-neutral-800 hover:bg-neutral-700 text-slate-300"
+      >
+        ✕
+      </button>
+      {err && <span className="text-red-400 text-xs">{err}</span>}
+    </span>
+  )
+}
+
+export default function BuyLog({ buys, fund = 'alfm' }) {
   const [page, setPage] = useState(1)
   const pageSize = 10
   const totalPages = Math.ceil(buys.length / pageSize)
@@ -130,7 +194,7 @@ export default function BuyLog({ buys }) {
             <button
               onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={page === 1}
-              className="px-2 py-1 text-xs rounded bg-slate-700 text-slate-300 disabled:opacity-40 hover:bg-slate-600 transition-colors"
+              className="px-2 py-1 text-xs rounded bg-neutral-800 text-slate-300 disabled:opacity-40 hover:bg-neutral-700 transition-colors"
             >
               ← Prev
             </button>
@@ -140,7 +204,7 @@ export default function BuyLog({ buys }) {
             <button
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
               disabled={page === totalPages}
-              className="px-2 py-1 text-xs rounded bg-slate-700 text-slate-300 disabled:opacity-40 hover:bg-slate-600 transition-colors"
+              className="px-2 py-1 text-xs rounded bg-neutral-800 text-slate-300 disabled:opacity-40 hover:bg-neutral-700 transition-colors"
             >
               Next →
             </button>
@@ -151,27 +215,55 @@ export default function BuyLog({ buys }) {
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
-            <tr className="text-left border-b border-slate-700">
+            <tr className="text-left border-b border-neutral-800">
               <th className="pb-2 pr-4 text-slate-400 font-medium text-xs">Date</th>
               <th className="pb-2 pr-4 text-slate-400 font-medium text-xs">Amount</th>
               <th className="pb-2 pr-4 text-slate-400 font-medium text-xs">NAVPU</th>
               <th className="pb-2 pr-4 text-slate-400 font-medium text-xs">Units</th>
               <th className="pb-2 pr-4 text-slate-400 font-medium text-xs">New Avg Price</th>
+              <th className="pb-2 pr-4 text-slate-400 font-medium text-xs">Status</th>
               <th className="pb-2 text-slate-400 font-medium text-xs">Month</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-700/50">
+          <tbody className="divide-y divide-white/[0.04]">
             {paged.map((buy) => (
-              <tr key={buy.id} className="hover:bg-slate-700/30 transition-colors">
+              <tr key={buy.id} className="hover:bg-neutral-900 transition-colors">
                 <td className="py-2.5 pr-4 text-slate-300 font-medium">{buy.date}</td>
                 <td className="py-2.5 pr-4 text-white font-bold">
                   {fmtPeso(buy.amount, 0)}
                 </td>
                 <td className="py-2.5 pr-4 text-slate-300">
-                  <EditNavpuCell buy={buy} />
+                  {buy.isPending ? (
+                    <span className="text-amber-300">
+                      ₱{Number(buy.navpu).toFixed(2)} <span className="text-amber-500 text-xs">(est.)</span>
+                    </span>
+                  ) : (
+                    <EditNavpuCell buy={buy} />
+                  )}
                 </td>
                 <td className="py-2.5 pr-4 text-slate-300">{fmt(buy.unitsBought, 4)}</td>
                 <td className="py-2.5 pr-4 text-slate-300">₱{Number(buy.newAvgPrice).toFixed(4)}</td>
+                <td className="py-2.5 pr-4">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {buy.isPending ? (
+                      <ConfirmNavpuCell buy={buy} fund={fund} />
+                    ) : buy.confirmedAt ? (
+                      <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-900/30 border border-emerald-700 text-emerald-400">
+                        Confirmed
+                      </span>
+                    ) : null}
+                    {buy.isDividendBuy && (
+                      <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-amber-900/30 border border-amber-700 text-amber-400">
+                        Div
+                      </span>
+                    )}
+                    {buy.isRspBuy && (
+                      <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-violet-900/30 border border-violet-700 text-violet-400">
+                        RSP
+                      </span>
+                    )}
+                  </div>
+                </td>
                 <td className="py-2.5 text-slate-500 text-xs">{buy.monthYear}</td>
               </tr>
             ))}

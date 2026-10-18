@@ -1,234 +1,172 @@
-# BTC Signal Engine — Swing Trade Strategy
+# BTC Signal Engine — Drawdown Buy Strategy
 
-**Version:** 2.0 — Swing Trade (replaces v1 DCA engine)
-**Last updated:** Apr 23, 2026
-**Exchange:** PDAX (PHP pairs, 0.5% taker fee)
-**Starting balance:** ₱15,000 (grows compounding each cycle)
+**Version:** 3.0 — Drawdown Buy-Only (replaces v2 Swing Trade)
+**Last updated:** Oct 19, 2026
+**Exchange:** PDAX (PHP pairs)
+**Budget:** ₱10,000/month, ₱500–₱1,000 per buy
 **Schedule:** Hourly check, 24/7
 
 ---
 
 ## Core Philosophy
 
-> Buy short-term weakness. Hold 2–5 days. Exit into bounce strength.
+> Buy when BTC drops significantly from its recent high. History shows these drawdowns recover +8% within 30 days.
 
-Not prediction. Structured mean reversion.
-**Backtest basis:** 72h win rate = 73.2% with avg +1.376% return — the clearest edge in the data.
+Buy-only engine. No sell signals — user manages exits independently.
+**Backtest basis:** Drawdown-from-30d-high produces consistent 8%+ recovery within 30 days at the right thresholds.
 
 ---
 
-## State Machine
+## 1. Signal Logic
+
+### Drawdown Calculation
+
+Every hour, compute how far the current price has dropped from the **30-day high**:
 
 ```
-FLAT → BUILDING → FULL → FLAT (repeat)
+drawdownPct = ((high30d - currentPrice) / high30d) * 100
 ```
 
-| State | Meaning |
-|---|---|
-| `FLAT` | No position. Engine scanning for Entry 1. |
-| `BUILDING` | 1–2 entries placed. Watching for additional entries or exits. |
-| `FULL` | All 3 entries placed. Watching exits only. |
+### Drawdown Tiers
 
----
-
-## 1. Market Context Filter (Macro)
-
-Checked every hour before any entry logic.
-
-| Condition | Action |
-|---|---|
-| 7-day drop ≤ -10% | **KILL SWITCH** — pause all new entries for 24h |
-| Price below 200-day MA | **REDUCED** — entry size cut 50% |
-| Price above 200-day MA | **NORMAL** — full entry size |
-
-The 200-day MA is fetched from Binance daily candles (200 periods).
-
----
-
-## 2. Entry Setup
-
-### Entry 1 — All conditions must be true
-
-| Condition | Threshold | Why |
+| Drawdown | Signal | Buy Amount |
 |---|---|---|
-| 24h price drop | -3% to -8% | Short-term panic window. Below -8% = flush risk. |
-| RSI (1h, period 14) | < 35 | Oversold — selling exhaustion present |
-| Stabilization | Green candle OR body ≤ 0.3% | Avoids catching exact knife |
-| Volume | ≥ 1.2× 30-day avg | Confirms real selling pressure, not illiquid wick |
-| Bounce from 24h low | ≤ 2% | Don't chase — must be near the low |
+| < 3% | `NO_BUY` | ₱0 |
+| 3–5% | `BUY` | ₱500 |
+| 5–10% | `BUY_MORE` | ₱750 |
+| 10–15% | `AGGRESSIVE` | ₱1,000 |
+| ≥ 15% | `PRIORITY_BUY` | ₱1,000 |
 
-### Entry 2 — Triggered automatically
-Price drops **-2% from Entry 1** price while BUILDING.
+Average cost is displayed as context (email + UI) but does **not** override signal tiers. Drawdown is the sole primary driver.
 
-### Entry 3 — Triggered automatically
-Price drops **-2% from Entry 2** price while BUILDING with 2 entries.
+### RSI Modifier (±1 tier)
 
-### Position sizing
+| Condition | Effect |
+|---|---|
+| RSI < 30 (oversold) | Upgrade tier by +1 (e.g. BUY → BUY_MORE) |
+| RSI > 70 (overbought) | Downgrade tier by -1 (e.g. BUY → NO_BUY) |
 
-| Macro mode | Per entry | Total max |
+RSI modifiers shift the tier, which changes the amount to that tier's default.
+
+### Fear & Greed Scaling (amount multiplier)
+
+Fear & Greed does **not** change the tier — it scales the buy amount after tier selection:
+
+| F&G Value | Label | Multiplier |
 |---|---|---|
-| NORMAL | balance ÷ 3 (~₱5,000) | ₱15,000 |
-| REDUCED (below 200 MA) | balance ÷ 6 (~₱2,500) | ₱7,500 |
+| ≤ 25 | Extreme Fear | 1.5× |
+| 26–45 | Fear | 1.2× |
+| 46–55 | Neutral | 1.0× |
+| 56–75 | Greed | 0.8× |
+| > 75 | Extreme Greed | 0.5× |
 
-Balance grows each cycle. Entry amounts scale automatically.
-
----
-
-## 3. Exit Strategy
-
-Exit levels computed from **average entry price** across all entries.
-
-### Scaled Take Profits
-
-| Target | Price trigger | Action | Net after PDAX fees (~) |
-|---|---|---|---|
-| TP1 | avg entry × 1.02 (+2%) | Sell 30% of BTC | ~+1.0% net |
-| TP2 | avg entry × 1.04 (+4%) | Sell 40% of remaining | ~+3.0% net |
-| TP3 | avg entry × 1.06 (+6%) | Sell remaining 30% | ~+5.0% net |
-
-### Stop Loss
-
-| Trigger | Action |
-|---|---|
-| Price ≤ avg entry × 0.92 (-8%) | Sell ALL immediately |
-
-### Time-Based Exit
-
-| Trigger | Action |
-|---|---|
-| 120 hours (5 days) from first entry | Exit at market regardless of price |
-
-**Why 120h?** Capital discipline — prevents indefinite lock-up in sideways markets. The 72h window is where the edge is; beyond 120h the edge decays.
-
-**Minimum hold:** 24h before TP1 triggers (prevents shaking out on normal volatility).
+The scaled amount is rounded to the nearest ₱50, then clamped between ₱500 and ₱1,000.
 
 ---
 
-## 4. Kill Switch
+## 2. Guards
 
-If BTC drops **-10% or more in the past 7 days** → engine pauses ALL new entries for 24 hours.
+### Monthly Budget Cap
+Hard cap: ₱10,000/month. If `totalSpentThisMonth + amount > 10000`, signal becomes `BUDGET_CAP`.
 
-Protects against entering during a macro flush when mean reversion timing is unreliable.
+### Minimum Gap
+At least **1 hour** between actionable buy signals to prevent rapid-fire buys.
 
----
+### Macro Drawdown Kill-Switch
+If BTC is **≥ 25% below its 90-day high**, buy sizes are reduced to **60%** of normal amounts. AGGRESSIVE tier is also downgraded to BUY_MORE.
 
-## 5. Signals
-
-| Signal | State | Email? | Action required |
-|---|---|---|---|
-| `SCAN` | FLAT | No | Watching — conditions not met |
-| `KILL_SWITCH` | Any | No | Entries paused 24h |
-| `ENTRY_1` | FLAT | Yes | Buy ₱5,000 on PDAX, log via I Bought |
-| `ADD_ENTRY` | BUILDING | Yes | Add next ₱5,000 tranche on PDAX |
-| `HOLDING` | BUILDING/FULL | Daily 9AM | In position — waiting |
-| `TP1_HIT` | BUILDING/FULL | Yes | Sell 30% on PDAX, log via I Sold |
-| `TP2_HIT` | BUILDING/FULL | Yes | Sell 40% of remaining on PDAX |
-| `TP3_HIT` | BUILDING/FULL | Yes | Sell remaining 30% on PDAX |
-| `TIME_EXIT` | Any | Yes | 120h limit — exit at market on PDAX |
-| `STOP_LOSS` | Any | Yes | -8% hit — sell ALL immediately on PDAX |
+### Extreme Override
+If price drops **≥ 4% in 1 hour** and fewer than 2 extreme overrides have fired in the last 24h, the signal is set to minimum `BUY_MORE` (if not already higher) with `bucket = 'extreme_override'`, bypassing the gap rule and budget cap. If 2 or more extreme overrides have already fired in 24h, the signal falls back to the normal opportunity bucket.
 
 ---
 
-## 6. Compounding
+## 3. Signals
 
-Each completed cycle the balance grows:
+| Signal | Email? | Action |
+|---|---|---|
+| `NO_BUY` | No | Drawdown too small or downgraded by modifiers |
+| `BUY` | Yes | Buy ₱500 on PDAX |
+| `BUY_MORE` | Yes | Buy ₱750 on PDAX |
+| `AGGRESSIVE` | Yes | Buy ₱1,000 on PDAX |
+| `PRIORITY_BUY` | Yes | Buy ₱1,000 on PDAX — deep drawdown or below avg cost |
+| `OPP_GAP_WAIT` | No | Actionable signal but too soon after last buy |
+| `BUDGET_CAP` | No | Monthly ₱10k limit reached |
 
-```
-Cycle 1:  ₱15,000 invested → +profit → new balance
-Cycle 2:  new balance ÷ 3 per entry → ...
+Email is only sent for actionable buy signals. No daily digest.
+
+### Email Contents
+- Signal name and recommended PHP amount
+- BTC price in USD and PHP (using hardcoded rate ₱57.5/USD)
+- Drawdown percentage from 30-day high
+- RSI value and label
+- Fear & Greed index and label
+- Recommendation text
+
+---
+
+## 4. Backtest
+
+The backtest validates the drawdown strategy over historical data.
+
+### Key Metrics
+- **8% Recovery Rate (30d):** What percentage of buy signals saw BTC reach +8% from entry within 30 days
+- **Avg Max Return (30d):** Average peak return within 30 days of each buy signal
+- **Drawdown Analysis:** Recovery rates grouped by drawdown bucket (0-3%, 3-5%, 5-10%, 10-15%, 15-20%, 20%+)
+- **Win rates** at 1h, 3h, 6h, 12h, 24h, 72h, 30d horizons
+
+### Schedule
+Backtest runs automatically on the 1st and 15th of each month. Can be triggered manually:
+```bash
+curl https://us-central1-alfm-tracker.cloudfunctions.net/runBtcBacktest?days=395
 ```
 
-Entry amounts always = `currentBalancePhp ÷ 3` (or ÷ 6 when REDUCED).
-
 ---
 
-## 7. Firestore Structure
+## 5. Firestore Structure
 
 ### `btc_position/current`
 
 ```
-state               'FLAT' | 'BUILDING' | 'FULL'
-currentBalancePhp   grows with profits
-entryCount          0–3
-entries             [{ priceUsd, amountPhp, timestamp }]
-avgEntryPriceUsd    weighted average of all entry prices
-totalDeployedPhp    sum of all entry PHP amounts
-firstEntryTimestamp ISO — start of 120h timer
-stopLossUsd         avgEntry × 0.92
-tp1Usd              avgEntry × 1.02
-tp2Usd              avgEntry × 1.04
-tp3Usd              avgEntry × 1.06
-hardExitTimestamp   firstEntry + 120h
-tp1Triggered        boolean
-tp2Triggered        boolean
-macroMode           'NORMAL' | 'REDUCED' | 'PAUSED'
-killSwitchUntil     ISO or null
+totalUnits          BTC accumulated
+totalCostUsd        total USD spent
+avgCostUsd          weighted average cost
+lastBuyTimestamp    ISO
 ```
 
 ### `btc_signals/{YYYY-MM-DDTHH}`
-One doc per hourly run. Full signal output including all entry/exit context.
-
-### `btc_trades`
-One doc per completed trade cycle (TP3, TIME_EXIT, STOP_LOSS, or manual sell).
+One doc per hourly run. Includes: signal, amount, drawdownPct, drawdownHigh, rsi, fearGreedIndex, currentPrice, phpPerUsd, recommendation.
 
 ### `btc_buys`
-One doc per individual entry execution (ENTRY_1 and ADD_ENTRY events).
+One doc per buy execution. Includes: date, amountPhp, btcPriceUsd, phpPerUsd, unitsBought, signalName, bucket, avgCostAfterUsd.
+
+### `btc_config/btc_backtest_summary`
+Backtest results: simulation, drawdown analysis, win rates, equity curve, Sharpe ratio, signal breakdown.
 
 ---
 
-## 8. vs Previous DCA Engine (v1)
+## 6. UI
 
-| Aspect | v1 DCA Engine | v2 Swing Engine |
-|---|---|---|
-| Frequency | Every actionable hourly signal | 1–3 entries per setup |
-| Entry gate | Buy zone + dip signal | Drop + RSI + stabilization + volume |
-| Position size | ₱500–₱1,000 per buy | ₱5,000 × 3 entries |
-| Exit | Single price target (7%) | Scaled TP1/TP2/TP3 + time + SL |
-| Stop loss | None | -8% hard stop |
-| Hold clarity | Implicit | Explicit 24–120h |
-| Edge alignment | Partial | Direct (72h mean reversion) |
-| Capital risk | Spread small buys | Concentrated, managed with SL |
+### BTC Tab Components
+- **Signal Card** — Latest signal with drawdown, RSI, Fear & Greed, volume, avg cost context
+- **Position Card** — Current holdings, avg cost, unrealized P&L
+- **Buy Log** — Chronological list of all recorded buys
+- **Sell Log** — Chronological list of all recorded sells with realized P&L
+- **Backtest Card** — Overview (equity curve, simulation, risk metrics, win rates, 8% recovery rate, drawdown analysis), Win Rates (by horizon and bucket), Signals (distribution, best/worst)
 
----
+### Overview Page
+BTC is included in the portfolio overview: portfolio summary totals, today's signals, positions table, and allocation pie chart.
 
-## 9. PDAX Fee Impact
-
-PDAX taker fee: **0.5% per side** = **1.0% round-trip per sell**.
-
-| Gross move | Net after fees |
-|---|---|
-| +2% (TP1) | ~+1.0% |
-| +4% (TP2) | ~+3.0% |
-| +6% (TP3) | ~+5.0% |
-| -8% (SL) | ~-9.0% |
-
-Blended net per full cycle (30%×TP1 + 40%×TP2 + 30%×TP3): **~+2.8% net**.
+### Floating Buttons
+**₿ I Sold** (green) + **₿ I Bought** (orange) — opens sell/buy modal to log transactions.
 
 ---
 
-## 10. Deployment
+## 7. Deployment
 
 ```bash
-# Build and deploy everything
 npm run build && firebase deploy
-
-# Initialize position state (run once after first deploy or reset)
-curl https://us-central1-alfm-tracker.cloudfunctions.net/initBtcPosition
 ```
 
 ### Required Firestore Index
 `btc_buys` collection needs composite index: `bucket` (ASC) + `timestamp` (ASC).
-Already defined in `firestore.indexes.json`.
-
----
-
-## 11. UI Reference
-
-| State | Floating button |
-|---|---|
-| FLAT | None (no position to sell) |
-| BUILDING / FULL | **I Sold** (green) — opens sell modal |
-
-The position card shows staggered entries, avg entry price, TP levels with prices, stop loss, hold time, and hard exit countdown.
-
-The signal card shows entry conditions met/unmet in real time so you can see how close BTC is to triggering an entry.
+Defined in `firestore.indexes.json`.

@@ -91,7 +91,7 @@ function buildEmailHtml(signal, todayStr, { isStaleNavpu = false, navpuDate = nu
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ALFM Daily Signal</title>
+<title>ALFMGMP Daily Signal</title>
 <style>
   body { font-family: 'Segoe UI', Arial, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; padding: 0; }
   .container { max-width: 580px; margin: 0 auto; padding: 24px 16px; }
@@ -114,7 +114,7 @@ function buildEmailHtml(signal, todayStr, { isStaleNavpu = false, navpuDate = nu
 <body>
 <div class="container">
   <div class="header">
-    <h1>ALFM Daily Signal</h1>
+    <h1>ALFMGMP Daily Signal</h1>
     <p>${todayStr} &middot; Asia/Manila</p>
   </div>
   <div class="body">
@@ -176,7 +176,7 @@ function buildEmailHtml(signal, todayStr, { isStaleNavpu = false, navpuDate = nu
     </div>
   </div>
   <div class="footer">
-    ALFM Fund Tracker &middot; Automated daily signal &middot; ${todayStr}<br>
+    ALFMGMP Tracker &middot; Automated daily signal &middot; ${todayStr}<br>
     <a href="https://alfm-tracker.web.app" style="color: #475569; text-decoration: none;">alfm-tracker.web.app</a>
   </div>
 </div>
@@ -206,14 +206,14 @@ async function sendSignalEmail(signal, todayStr, gmailUser, gmailPass, navpuMeta
 
   const { signal: signalName, amount, todayNavpu } = signal
   const { isStaleNavpu = false } = navpuMeta
-  const subject = `ALFM Signal: ${signalName.replace(/_/g, ' ')} ${
+  const subject = `ALFMGMP Signal: ${signalName.replace(/_/g, ' ')} ${
     amount > 0 ? fmtPeso(amount, 0) : ''
   } | NAVPU ₱${fmt(todayNavpu, 2)}${isStaleNavpu ? ' ⚠️ STALE' : ''}`
 
   const html = buildEmailHtml(signal, todayStr, navpuMeta)
 
   const info = await transporter.sendMail({
-    from: `"ALFM Tracker" <${gmailUser}>`,
+    from: `"ALFMGMP Tracker" <${gmailUser}>`,
     to: TO_EMAIL,
     subject,
     html,
@@ -274,7 +274,7 @@ const SIGNAL_COLORS = {
  * @param {string} nowIso   ISO timestamp string of the check (e.g. "2026-04-23T08:00:00.000Z")
  * @returns {string}        Full HTML string ready to send
  */
-function buildBtcEmailHtml(signal, nowIso) {
+function buildBtcEmailHtml(signal, nowIso, phpPerUsd = 57.5) {
   const {
     signal:         signalName,
     amount,
@@ -283,19 +283,16 @@ function buildBtcEmailHtml(signal, nowIso) {
     vsAvg,
     hourlyChange,
     hourlyChangePct,
-    dipSignals,
-    trendWarning,
-    staggerWarning,
-    volumeWarning,
+    drawdownPct,
+    drawdownHigh,
     rsiLabel,
     fearGreedIndex,
     fearGreedLabel,
     recommendation,
-    isActionable,
     bucket,
+    macroDrawdownActive,
   } = signal
 
-  // Format the check time in PH timezone for the email header
   const phTime = new Date(nowIso).toLocaleString('en-PH', {
     timeZone: 'Asia/Manila',
     dateStyle: 'medium',
@@ -309,15 +306,16 @@ function buildBtcEmailHtml(signal, nowIso) {
 
   const signalColor = SIGNAL_COLORS[signalName] || '#94a3b8'
 
+  const pricePhp = currentPrice * phpPerUsd
+  const phpPriceStr = fmtPeso(pricePhp, 0)
+
+  const sellTargetUsd = currentPrice * 1.20
+  const sellTargetPhp = sellTargetUsd * phpPerUsd
+
   const vsAvgText =
     vsAvg === 'BELOW_AVG' ? `Below ${fmtUsd(avgCost)} ↓ Good entry!` :
     vsAvg === 'ABOVE_AVG' ? `Above ${fmtUsd(avgCost)} ↑` :
                             `At ${fmtUsd(avgCost)}`
-
-  const dipText =
-    dipSignals && dipSignals.length > 0
-      ? `Yes: ${dipSignals.map((d) => d.replace(/_/g, ' ')).join(', ')}`
-      : 'None'
 
   const fearGreedText = fearGreedIndex != null
     ? `${fearGreedIndex} — ${(fearGreedLabel || 'N/A').replace(/_/g, ' ')}`
@@ -353,7 +351,7 @@ function buildBtcEmailHtml(signal, nowIso) {
 <div class="container">
   <div class="header">
     <h1>&#8383; BTC Signal</h1>
-    <p>${phTime} &middot; Asia/Manila &middot; Hourly check</p>
+    <p>${phTime} &middot; Asia/Manila &middot; Drawdown-based buy engine</p>
   </div>
   <div class="body">
 
@@ -361,12 +359,22 @@ function buildBtcEmailHtml(signal, nowIso) {
       ${signalName.replace(/_/g, ' ')}
     </div>
 
-    ${amount > 0 ? `<div class="amount">₱${amount.toLocaleString()}</div>` : ''}
+    ${amount > 0 ? `<div class="amount">${fmtPeso(amount, 0)}</div>` : ''}
 
     <div style="margin-bottom: 16px;">
       <div class="row">
-        <span class="label">BTC Price</span>
+        <span class="label">BTC Price (USD)</span>
         <span class="value">${fmtUsd(currentPrice, 2)}</span>
+      </div>
+      <div class="row">
+        <span class="label">BTC Price (PHP)</span>
+        <span class="value">${phpPriceStr}</span>
+      </div>
+      <div class="row">
+        <span class="label">Drawdown from 30d High</span>
+        <span class="value" style="color: ${drawdownPct >= 5 ? '#ef4444' : drawdownPct >= 3 ? '#fb923c' : '#94a3b8'};">
+          -${fmt(drawdownPct, 1)}% (high: ${fmtUsd(drawdownHigh, 0)})
+        </span>
       </div>
       <div class="row">
         <span class="label">Hourly Change</span>
@@ -379,10 +387,6 @@ function buildBtcEmailHtml(signal, nowIso) {
         <span class="value">${vsAvgText}</span>
       </div>
       <div class="row">
-        <span class="label">Dip Signal</span>
-        <span class="value">${dipText}</span>
-      </div>
-      <div class="row">
         <span class="label">RSI (14)</span>
         <span class="value" style="color: ${rsiLabel === 'OVERSOLD' ? '#22c55e' : rsiLabel === 'OVERBOUGHT' ? '#ef4444' : '#f1f5f9'};">
           ${rsiLabel || 'N/A'}
@@ -392,25 +396,30 @@ function buildBtcEmailHtml(signal, nowIso) {
         <span class="label">Fear &amp; Greed</span>
         <span class="value">${fearGreedText}</span>
       </div>
-      ${trendWarning ? `
-      <div class="row">
-        <span class="label">Trend Warning</span>
-        <span class="value" style="color: #fb923c;">${String(trendWarning).replace(/_/g, ' ')}</span>
-      </div>` : ''}
       <div class="row">
         <span class="label">Bucket</span>
         <span class="value">${bucket || 'N/A'}</span>
       </div>
     </div>
 
-    ${staggerWarning ? `
-    <div class="warning">
-      &#9888; STAGGER WARNING: Extreme hourly drop (&le; -4%). Consider splitting into 2&ndash;3 smaller buys over the next few hours instead of deploying the full amount at once.
-    </div>` : ''}
+    <div style="background: #064e3b; border: 1px solid #059669; border-radius: 8px; padding: 16px; margin: 16px 0;">
+      <strong style="color: #6ee7b7; display: block; margin-bottom: 10px; font-size: 14px;">Sell Target (+20% from buy price)</strong>
+      <div style="display: flex; justify-content: space-between; padding: 6px 0;">
+        <span style="color: #a7f3d0; font-size: 13px;">Target (USD)</span>
+        <span style="color: #f1f5f9; font-size: 15px; font-weight: 700;">${fmtUsd(sellTargetUsd, 0)}</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; padding: 6px 0;">
+        <span style="color: #a7f3d0; font-size: 13px;">Target (PHP)</span>
+        <span style="color: #f1f5f9; font-size: 15px; font-weight: 700;">${fmtPeso(sellTargetPhp, 0)}</span>
+      </div>
+      <div style="color: #6ee7b7; font-size: 11px; margin-top: 8px;">
+        Sell when BTC hits this price to lock in at least 20% profit from this entry.
+      </div>
+    </div>
 
-    ${volumeWarning ? `
+    ${macroDrawdownActive ? `
     <div class="warning">
-      &#9888; VOLUME WARNING: STRONG_DROP removed &mdash; this hour's volume is below 80% of the 30-day average. Likely a low-conviction wick, not genuine selling pressure.
+      &#9888; MACRO DRAWDOWN: BTC is &gt;25% below 90d high. Buy sizes reduced to 60%.
     </div>` : ''}
 
     ${fearGreedLabel === 'EXTREME_FEAR' ? `
@@ -429,7 +438,7 @@ function buildBtcEmailHtml(signal, nowIso) {
     </div>
 
     <div class="footer">
-      BTC Tracker &middot; Automated hourly signal &middot; ${phTime}<br>
+      BTC Tracker &middot; Drawdown buy signal &middot; ${phTime}<br>
       <a href="https://alfm-tracker.web.app" style="color: #334155; text-decoration: none;">alfm-tracker.web.app</a>
     </div>
   </div>
@@ -454,7 +463,7 @@ function buildBtcEmailHtml(signal, nowIso) {
  * @param {string} gmailPass   Gmail app password (from Firebase secret)
  * @returns {Promise<object>}  Nodemailer send result
  */
-async function sendBtcSignalEmail(signal, nowIso, gmailUser, gmailPass) {
+async function sendBtcSignalEmail(signal, nowIso, gmailUser, gmailPass, phpPerUsd = 57.5) {
   const transporter = nodemailer.createTransport({
     host: 'smtp.gmail.com',
     port: 587,
@@ -463,12 +472,13 @@ async function sendBtcSignalEmail(signal, nowIso, gmailUser, gmailPass) {
   })
 
   const { signal: signalName, amount, currentPrice } = signal
+  const phpPrice = Math.round(currentPrice * phpPerUsd).toLocaleString()
 
   const subject = `BTC Signal: ${signalName.replace(/_/g, ' ')}${
     amount > 0 ? ` ₱${amount.toLocaleString()}` : ''
-  } | $${currentPrice.toLocaleString()}`
+  } | $${currentPrice.toLocaleString()} (₱${phpPrice})`
 
-  const html = buildBtcEmailHtml(signal, nowIso)
+  const html = buildBtcEmailHtml(signal, nowIso, phpPerUsd)
 
   const info = await transporter.sendMail({
     from: `"BTC Tracker" <${gmailUser}>`,
@@ -481,106 +491,6 @@ async function sendBtcSignalEmail(signal, nowIso, gmailUser, gmailPass) {
   return info
 }
 
-/**
- * Build the HTML email for a SELL signal.
- */
-function buildBtcSellEmailHtml(signal, nowIso) {
-  const { entryPriceUsd, currentPrice, entryPhp, profitPhp, newBalancePhp, holdHours, recommendation } = signal
-  const phTime = new Date(nowIso).toLocaleString('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'medium', timeStyle: 'short' })
-  const holdText = holdHours != null ? (holdHours < 24 ? `${holdHours.toFixed(1)}h` : `${(holdHours / 24).toFixed(1)}d`) : '—'
-
-  return `
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>BTC Sell Signal</title>
-<style>
-  body { font-family: 'Segoe UI', Arial, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; padding: 0; }
-  .container { max-width: 580px; margin: 0 auto; padding: 24px 16px; }
-  .header { background: #052e16; border-radius: 12px 12px 0 0; padding: 24px; border-bottom: 2px solid #16a34a; }
-  .header h1 { margin: 0; font-size: 20px; color: #4ade80; }
-  .header p  { margin: 4px 0 0; color: #166534; font-size: 13px; }
-  .body { background: #1e293b; padding: 24px; border-radius: 0 0 12px 12px; }
-  .profit-box { background: #052e16; border: 1px solid #16a34a; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px; }
-  .profit-label { color: #4ade80; font-size: 13px; margin-bottom: 4px; }
-  .profit-amount { color: #4ade80; font-size: 36px; font-weight: 800; }
-  .new-balance { color: #86efac; font-size: 14px; margin-top: 4px; }
-  .row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #334155; }
-  .row:last-child { border-bottom: none; }
-  .label { color: #94a3b8; font-size: 13px; }
-  .value { color: #f1f5f9; font-size: 13px; font-weight: 600; text-align: right; }
-  .recommendation { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 16px; margin: 20px 0; color: #cbd5e1; font-size: 14px; line-height: 1.6; }
-  .footer { text-align: center; color: #334155; font-size: 11px; margin-top: 16px; }
-</style>
-</head>
-<body>
-<div class="container">
-  <div class="header">
-    <h1>&#8383; SELL TARGET HIT</h1>
-    <p>${phTime} &middot; Asia/Manila</p>
-  </div>
-  <div class="body">
-    <div class="profit-box">
-      <div class="profit-label">Net Profit (+5% after fees)</div>
-      <div class="profit-amount">+${fmtPeso(profitPhp, 0)}</div>
-      <div class="new-balance">New balance: ${fmtPeso(newBalancePhp, 0)}</div>
-    </div>
-    <div style="margin-bottom: 16px;">
-      <div class="row">
-        <span class="label">Entry Price (USD)</span>
-        <span class="value">${fmtUsd(entryPriceUsd, 2)}</span>
-      </div>
-      <div class="row">
-        <span class="label">Exit Price (USD)</span>
-        <span class="value" style="color: #4ade80;">${fmtUsd(currentPrice, 2)}</span>
-      </div>
-      <div class="row">
-        <span class="label">Price Move</span>
-        <span class="value" style="color: #4ade80;">+${fmt((((currentPrice - entryPriceUsd) / entryPriceUsd) * 100), 2)}%</span>
-      </div>
-      <div class="row">
-        <span class="label">PHP Deployed</span>
-        <span class="value">${fmtPeso(entryPhp, 0)}</span>
-      </div>
-      <div class="row">
-        <span class="label">Hold Duration</span>
-        <span class="value">${holdText}</span>
-      </div>
-    </div>
-    <div class="recommendation">
-      <strong style="color: #4ade80; display: block; margin-bottom: 8px;">Action Required</strong>
-      ${recommendation}
-    </div>
-    <div class="footer">
-      BTC Tracker &middot; Swing Trade &middot; ${phTime}<br>
-      <a href="https://alfm-tracker.web.app" style="color: #334155; text-decoration: none;">alfm-tracker.web.app</a>
-    </div>
-  </div>
-</div>
-</body>
-</html>`
-}
-
-async function sendBtcSellEmail(signal, nowIso, gmailUser, gmailPass) {
-  const transporter = nodemailer.createTransport({
-    host: 'smtp.gmail.com',
-    port: 587,
-    secure: false,
-    auth: { user: gmailUser, pass: gmailPass },
-  })
-  const { currentPrice, profitPhp } = signal
-  const subject = `BTC SELL NOW — +${fmtPeso(profitPhp, 0)} profit | $${currentPrice.toLocaleString()}`
-  const info = await transporter.sendMail({
-    from: `"BTC Tracker" <${gmailUser}>`,
-    to: TO_EMAIL,
-    subject,
-    html: buildBtcSellEmailHtml(signal, nowIso),
-  })
-  console.log('[emailer] BTC sell email sent:', info.messageId)
-  return info
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MGPIFF Signal Email
@@ -737,4 +647,323 @@ async function sendMgpiffSignalEmail(signal, todayStr, gmailUser, gmailPass) {
   return info
 }
 
-module.exports = { sendSignalEmail, sendBtcSignalEmail, sendBtcSellEmail, sendMgpiffSignalEmail }
+// ─────────────────────────────────────────────────────────────────────────────
+// BPIBGIF Signal Email
+// ─────────────────────────────────────────────────────────────────────────────
+
+function buildBpibondEmailHtml(signal, todayStr, { isRspDay = false, rspBuyDone = false } = {}) {
+  const {
+    signal: signalName,
+    amount,
+    dailyChange,
+    dailyChangePct,
+    todayNavpu,
+    avgPrice,
+    vsAvg,
+    dipSignals,
+    divCycle,
+    trendWarning,
+    staggerWarning,
+    recommendation,
+  } = signal
+
+  const isUp = dailyChange > 0
+  const isDown = dailyChange < 0
+  const changeSign = isUp ? '+' : ''
+  const changeColor = isUp ? '#22c55e' : isDown ? '#ef4444' : '#94a3b8'
+  const signalColor = SIGNAL_COLORS[signalName] || '#94a3b8'
+
+  const vsAvgText = avgPrice && avgPrice > 0
+    ? vsAvg === 'BELOW_AVG'
+      ? `Below ₱${fmt(avgPrice, 2)} ↓ Good entry!`
+      : vsAvg === 'ABOVE_AVG'
+      ? `Above ₱${fmt(avgPrice, 2)} ↑`
+      : `At ₱${fmt(avgPrice, 2)}`
+    : 'No position yet'
+
+  const dipText = dipSignals && dipSignals.length > 0
+    ? `Yes: ${dipSignals.map((d) => d.replace(/_/g, ' ')).join(', ')}`
+    : 'No'
+
+  return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BPIBGIF Daily Signal</title>
+<style>
+  body { font-family: 'Segoe UI', Arial, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; padding: 0; }
+  .container { max-width: 580px; margin: 0 auto; padding: 24px 16px; }
+  .header { background: #1e293b; border-radius: 12px 12px 0 0; padding: 24px; border-bottom: 2px solid #7c3aed; }
+  .header h1 { margin: 0; font-size: 20px; color: #f1f5f9; }
+  .header p { margin: 4px 0 0; color: #64748b; font-size: 13px; }
+  .body { background: #1e293b; padding: 24px; border-radius: 0 0 12px 12px; }
+  .signal-badge { display: inline-block; padding: 8px 20px; border-radius: 999px; font-weight: 700; font-size: 18px; margin-bottom: 16px; }
+  .amount { font-size: 28px; font-weight: 800; color: #f1f5f9; margin-bottom: 20px; }
+  .row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #334155; }
+  .row:last-child { border-bottom: none; }
+  .label { color: #94a3b8; font-size: 13px; }
+  .value { color: #f1f5f9; font-size: 13px; font-weight: 600; text-align: right; }
+  .recommendation { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 16px; margin: 20px 0; color: #cbd5e1; font-size: 14px; line-height: 1.6; }
+  .warning { background: #451a03; border: 1px solid #92400e; border-radius: 8px; padding: 12px 16px; margin: 12px 0; color: #fcd34d; font-size: 13px; }
+  .tip { color: #475569; font-size: 12px; margin-top: 20px; padding-top: 16px; border-top: 1px solid #334155; }
+  .footer { text-align: center; color: #334155; font-size: 11px; margin-top: 16px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>BPIBGIF Daily Signal</h1>
+    <p>BPI Global Bond Income Fund &middot; ${todayStr} &middot; Asia/Manila</p>
+  </div>
+  <div class="body">
+    <div class="signal-badge" style="background-color: ${signalColor}22; color: ${signalColor}; border: 1px solid ${signalColor}55;">
+      ${signalName.replace(/_/g, ' ')}
+    </div>
+    ${amount > 0 ? `<div class="amount">${fmtPeso(amount, 0)}</div>` : ''}
+
+    <div style="margin-bottom: 16px;">
+      <div class="row">
+        <span class="label">NAVPU Today</span>
+        <span class="value">₱${fmt(todayNavpu, 2)}</span>
+      </div>
+      <div class="row">
+        <span class="label">Daily Change</span>
+        <span class="value" style="color: ${changeColor};">
+          ${changeSign}${fmt(dailyChange, 4)} (${changeSign}${fmt(dailyChangePct, 2)}%)
+        </span>
+      </div>
+      <div class="row">
+        <span class="label">vs Avg Price</span>
+        <span class="value">${vsAvgText}</span>
+      </div>
+      <div class="row">
+        <span class="label">Dip Signal</span>
+        <span class="value">${dipText}</span>
+      </div>
+      <div class="row">
+        <span class="label">Dividend Cycle</span>
+        <span class="value">${divCycle || 'N/A'}</span>
+      </div>
+      ${trendWarning ? `
+      <div class="row">
+        <span class="label">Trend Warning</span>
+        <span class="value" style="color: #fb923c;">${String(trendWarning).replace(/_/g, ' ')}</span>
+      </div>` : ''}
+    </div>
+
+    ${staggerWarning ? `
+    <div class="warning">
+      ⚠️ STAGGER WARNING: Extreme drop detected. Consider splitting into 2–3 smaller buys over the next few trading days.
+    </div>` : ''}
+
+    ${isRspDay && !rspBuyDone ? `
+    <div style="background: #1e1b4b; border: 1px solid #6366f1; border-radius: 8px; padding: 16px; margin: 12px 0;">
+      <strong style="color: #a5b4fc; display: block; margin-bottom: 8px; font-size: 14px;">📅 RSP Due Today — ₱1,000</strong>
+      <div style="color: #c7d2fe; font-size: 13px; line-height: 1.5;">
+        Your monthly RSP contribution of <strong style="color: #f1f5f9;">₱1,000</strong> is due today.
+        Place the order via the <strong>BPI app</strong> alongside any signal-based buy.
+      </div>
+    </div>` : ''}
+
+    <div class="recommendation">
+      <strong style="color: #f1f5f9; display: block; margin-bottom: 8px;">Recommendation</strong>
+      ${recommendation}
+    </div>
+
+    <div class="tip">
+      📱 <strong>Execution tip:</strong> Place your order via <strong>BPI app</strong> before the fund cut-off. Latest NAVPU is ₱${fmt(todayNavpu, 2)} (T-1). Your actual execution price will be today's closing NAVPU.
+    </div>
+  </div>
+  <div class="footer">
+    BPIBGIF Tracker &middot; Automated daily signal &middot; ${todayStr}<br>
+    <a href="https://alfm-tracker.web.app" style="color: #475569; text-decoration: none;">alfm-tracker.web.app</a>
+  </div>
+</div>
+</body>
+</html>
+`
+}
+
+async function sendBpibondSignalEmail(signal, todayStr, gmailUser, gmailPass, rspMeta = {}) {
+  const transporter = nodemailer.createTransport({
+    host: 'smtp.gmail.com',
+    port: 587,
+    secure: false,
+    auth: { user: gmailUser, pass: gmailPass },
+  })
+
+  const { signal: signalName, amount, todayNavpu } = signal
+  const { isRspDay = false, rspBuyDone = false } = rspMeta
+  const rspTag = isRspDay && !rspBuyDone ? ' 📅 RSP ₱1,000' : ''
+  const subject = `BPIBGIF Signal: ${signalName.replace(/_/g, ' ')} ${
+    amount > 0 ? fmtPeso(amount, 0) : ''
+  } | NAVPU ₱${fmt(todayNavpu, 2)}${rspTag}`
+
+  const info = await transporter.sendMail({
+    from: `"BPIBGIF Tracker" <${gmailUser}>`,
+    to: TO_EMAIL,
+    subject,
+    html: buildBpibondEmailHtml(signal, todayStr, rspMeta),
+  })
+
+  console.log('[emailer] BPIBGIF email sent:', info.messageId)
+  return info
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MREIT Signal Email
+// ─────────────────────────────────────────────────────────────────────────────
+
+function buildMreitEmailHtml(signal, todayStr) {
+  const {
+    signal: signalName,
+    amount,
+    dailyChange,
+    dailyChangePct,
+    todayNavpu,
+    avgPrice,
+    vsAvg,
+    dipSignals,
+    divCycle,
+    trendWarning,
+    staggerWarning,
+    recommendation,
+  } = signal
+
+  const isUp = dailyChange > 0
+  const isDown = dailyChange < 0
+  const changeSign = isUp ? '+' : ''
+  const changeColor = isUp ? '#22c55e' : isDown ? '#ef4444' : '#94a3b8'
+  const signalColor = SIGNAL_COLORS[signalName] || '#94a3b8'
+
+  const vsAvgText = avgPrice && avgPrice > 0
+    ? vsAvg === 'BELOW_AVG'
+      ? `Below ₱${fmt(avgPrice, 2)} ↓ Good entry!`
+      : vsAvg === 'ABOVE_AVG'
+      ? `Above ₱${fmt(avgPrice, 2)} ↑`
+      : `At ₱${fmt(avgPrice, 2)}`
+    : 'No position yet'
+
+  const dipText = dipSignals && dipSignals.length > 0
+    ? `Yes: ${dipSignals.map((d) => d.replace(/_/g, ' ')).join(', ')}`
+    : 'No'
+
+  return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MREIT Daily Signal</title>
+<style>
+  body { font-family: 'Segoe UI', Arial, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; padding: 0; }
+  .container { max-width: 580px; margin: 0 auto; padding: 24px 16px; }
+  .header { background: #1e293b; border-radius: 12px 12px 0 0; padding: 24px; border-bottom: 2px solid #d97706; }
+  .header h1 { margin: 0; font-size: 20px; color: #f1f5f9; }
+  .header p { margin: 4px 0 0; color: #64748b; font-size: 13px; }
+  .body { background: #1e293b; padding: 24px; border-radius: 0 0 12px 12px; }
+  .signal-badge { display: inline-block; padding: 8px 20px; border-radius: 999px; font-weight: 700; font-size: 18px; margin-bottom: 16px; }
+  .amount { font-size: 28px; font-weight: 800; color: #f1f5f9; margin-bottom: 20px; }
+  .row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #334155; }
+  .row:last-child { border-bottom: none; }
+  .label { color: #94a3b8; font-size: 13px; }
+  .value { color: #f1f5f9; font-size: 13px; font-weight: 600; text-align: right; }
+  .recommendation { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 16px; margin: 20px 0; color: #cbd5e1; font-size: 14px; line-height: 1.6; }
+  .warning { background: #451a03; border: 1px solid #92400e; border-radius: 8px; padding: 12px 16px; margin: 12px 0; color: #fcd34d; font-size: 13px; }
+  .tip { color: #475569; font-size: 12px; margin-top: 20px; padding-top: 16px; border-top: 1px solid #334155; }
+  .footer { text-align: center; color: #334155; font-size: 11px; margin-top: 16px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>MREIT Daily Signal</h1>
+    <p>Manulife Global REIT Feeder Fund PhP-Unhedged &middot; ${todayStr} &middot; Asia/Manila</p>
+  </div>
+  <div class="body">
+    <div class="signal-badge" style="background-color: ${signalColor}22; color: ${signalColor}; border: 1px solid ${signalColor}55;">
+      ${signalName.replace(/_/g, ' ')}
+    </div>
+    ${amount > 0 ? `<div class="amount">${fmtPeso(amount, 0)}</div>` : ''}
+
+    <div style="margin-bottom: 16px;">
+      <div class="row">
+        <span class="label">NAVPU Today</span>
+        <span class="value">₱${fmt(todayNavpu, 4)}</span>
+      </div>
+      <div class="row">
+        <span class="label">Daily Change</span>
+        <span class="value" style="color: ${changeColor};">
+          ${changeSign}${fmt(dailyChange, 4)} (${changeSign}${fmt(dailyChangePct, 2)}%)
+        </span>
+      </div>
+      <div class="row">
+        <span class="label">vs Avg Price</span>
+        <span class="value">${vsAvgText}</span>
+      </div>
+      <div class="row">
+        <span class="label">Dip Signal</span>
+        <span class="value">${dipText}</span>
+      </div>
+      <div class="row">
+        <span class="label">Dividend Cycle</span>
+        <span class="value">${divCycle || 'N/A'}</span>
+      </div>
+      ${trendWarning ? `
+      <div class="row">
+        <span class="label">Trend Warning</span>
+        <span class="value" style="color: #fb923c;">${String(trendWarning).replace(/_/g, ' ')}</span>
+      </div>` : ''}
+    </div>
+
+    ${staggerWarning ? `
+    <div class="warning">
+      ⚠️ STAGGER WARNING: Extreme drop detected. Consider splitting into 2–3 smaller buys over the next few trading days.
+    </div>` : ''}
+
+    <div class="recommendation">
+      <strong style="color: #f1f5f9; display: block; margin-bottom: 8px;">Recommendation</strong>
+      ${recommendation}
+    </div>
+
+    <div class="tip">
+      📱 <strong>Execution tip:</strong> Place your order via <strong>GCash GFunds</strong> before the fund cut-off. Latest NAVPU is ₱${fmt(todayNavpu, 4)} (T-1). Your actual execution price will be today's closing NAVPU.
+    </div>
+  </div>
+  <div class="footer">
+    MREIT Tracker &middot; Automated daily signal &middot; ${todayStr}<br>
+    <a href="https://alfm-tracker.web.app" style="color: #475569; text-decoration: none;">alfm-tracker.web.app</a>
+  </div>
+</div>
+</body>
+</html>
+`
+}
+
+async function sendMreitSignalEmail(signal, todayStr, gmailUser, gmailPass) {
+  const transporter = nodemailer.createTransport({
+    host: 'smtp.gmail.com',
+    port: 587,
+    secure: false,
+    auth: { user: gmailUser, pass: gmailPass },
+  })
+
+  const { signal: signalName, amount, todayNavpu } = signal
+  const subject = `MREIT Signal: ${signalName.replace(/_/g, ' ')} ${
+    amount > 0 ? fmtPeso(amount, 0) : ''
+  } | NAVPU ₱${fmt(todayNavpu, 4)}`
+
+  const info = await transporter.sendMail({
+    from: `"MREIT Tracker" <${gmailUser}>`,
+    to: TO_EMAIL,
+    subject,
+    html: buildMreitEmailHtml(signal, todayStr),
+  })
+
+  console.log('[emailer] MREIT email sent:', info.messageId)
+  return info
+}
+
+module.exports = { sendSignalEmail, sendBtcSignalEmail, sendMgpiffSignalEmail, sendBpibondSignalEmail, sendMreitSignalEmail }

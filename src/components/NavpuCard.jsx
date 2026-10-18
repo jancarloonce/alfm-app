@@ -75,7 +75,7 @@ export default function NavpuCard({ todayNavpu, navDate, dailyChange, navHigh, n
             <span
               className={`text-xs font-bold px-3 py-1 rounded-full ${
                 tier === 'NO BUY'
-                  ? 'bg-slate-700 text-slate-300'
+                  ? 'bg-neutral-800 text-slate-300'
                   : tier === 'WATCH'
                   ? 'bg-yellow-900 text-yellow-300'
                   : tier === 'BUY'
@@ -92,7 +92,7 @@ export default function NavpuCard({ todayNavpu, navDate, dailyChange, navHigh, n
       </div>
 
       {/* 90-day stats */}
-      <div className="border-t border-slate-700 pt-3 space-y-2">
+      <div className="border-t border-neutral-800 pt-3 space-y-2">
         <p className="label text-xs mb-2">90-Day Range</p>
         <div className="flex justify-between">
           <span className="text-slate-400 text-sm">High</span>
@@ -109,7 +109,7 @@ export default function NavpuCard({ todayNavpu, navDate, dailyChange, navHigh, n
       </div>
 
       {/* Tier reference */}
-      <div className="border-t border-slate-700 pt-3 mt-3">
+      <div className="border-t border-neutral-800 pt-3 mt-3">
         <div className="flex items-center justify-between mb-2">
           <p className="label text-xs">Buy Tiers</p>
           {thresholds && (

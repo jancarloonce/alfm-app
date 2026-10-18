@@ -150,13 +150,13 @@ export default function BtcBuyModal({ onClose, btcSignal, btcPosition, currentMo
 
   return (
     <div
-      className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+      className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
       onClick={handleBackdrop}
     >
-      <div className="bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+      <div className="bg-neutral-900 border border-neutral-800 rounded-lg w-full max-w-lg max-h-[90vh] overflow-y-auto">
 
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-800">
           <h2 className="text-lg font-bold text-white">₿ Record BTC Buy</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors p-1">
             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -169,7 +169,7 @@ export default function BtcBuyModal({ onClose, btcSignal, btcPosition, currentMo
 
           {/* Signal context banner */}
           {btcSignal && (
-            <div className="bg-slate-700/50 border border-slate-600 rounded-xl p-4">
+            <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4">
               <p className="text-slate-400 text-xs font-medium mb-1">Signal at time of buy</p>
               <div className="flex items-center gap-3">
                 <span className={`font-bold text-base ${SIGNAL_COLOR[btcSignal.signal] || 'text-slate-300'}`}>
@@ -213,7 +213,7 @@ export default function BtcBuyModal({ onClose, btcSignal, btcPosition, currentMo
                     type="number"
                     value={amountPhp}
                     onChange={(e) => setAmountPhp(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-600 rounded-lg pl-7 pr-4 py-3 text-white text-lg font-bold focus:outline-none focus:border-orange-500 transition-colors"
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-lg pl-7 pr-4 py-3 text-white text-lg font-bold focus:outline-none focus:border-orange-500 transition-colors"
                     placeholder="1500"
                     min="0"
                     step="500"
@@ -243,7 +243,7 @@ export default function BtcBuyModal({ onClose, btcSignal, btcPosition, currentMo
                     type="number"
                     value={btcPrice}
                     onChange={(e) => setBtcPrice(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-600 rounded-lg pl-7 pr-4 py-3 text-white text-lg font-bold focus:outline-none focus:border-orange-500 transition-colors"
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-lg pl-7 pr-4 py-3 text-white text-lg font-bold focus:outline-none focus:border-orange-500 transition-colors"
                     placeholder="85000"
                     step="100"
                   />
@@ -272,7 +272,7 @@ export default function BtcBuyModal({ onClose, btcSignal, btcPosition, currentMo
                     type="number"
                     value={phpPerUsd}
                     onChange={(e) => setPhpPerUsd(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-600 rounded-lg pl-10 pr-4 py-3 text-white text-lg font-bold focus:outline-none focus:border-orange-500 transition-colors"
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-lg pl-10 pr-4 py-3 text-white text-lg font-bold focus:outline-none focus:border-orange-500 transition-colors"
                     placeholder="57.50"
                     step="0.01"
                   />
@@ -291,7 +291,7 @@ export default function BtcBuyModal({ onClose, btcSignal, btcPosition, currentMo
                     className={`text-xs px-2 py-0.5 rounded border transition-colors ${
                       useManual
                         ? 'bg-amber-900/50 border-amber-600 text-amber-300'
-                        : 'bg-slate-700 border-slate-600 text-slate-400 hover:text-slate-300'
+                        : 'bg-neutral-800/50 border-neutral-800 text-slate-400 hover:text-slate-300'
                     }`}
                   >
                     {useManual ? 'Manual (from exchange)' : 'Auto (calculated)'}
@@ -303,7 +303,7 @@ export default function BtcBuyModal({ onClose, btcSignal, btcPosition, currentMo
                       type="number"
                       value={manualUnits}
                       onChange={(e) => setManualUnits(e.target.value)}
-                      className="w-full bg-slate-900 border border-amber-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-amber-500 transition-colors"
+                      className="w-full bg-neutral-950 border border-amber-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-amber-500 transition-colors"
                       placeholder={`Auto: ${fmt(calcUnits, 6)}`}
                       step="0.000001"
                     />
@@ -312,7 +312,7 @@ export default function BtcBuyModal({ onClose, btcSignal, btcPosition, currentMo
                     </p>
                   </>
                 ) : (
-                  <div className="bg-slate-900/50 border border-slate-700 rounded-lg px-4 py-3">
+                  <div className="bg-neutral-900 border border-neutral-800 rounded-lg px-4 py-3">
                     <p className="text-white font-bold">₿ {fmt(calcUnits, 6)}</p>
                     <p className="text-slate-500 text-xs mt-0.5">
                       ₱{parsedAmount} ÷ {parsedRate} (rate) ÷ ${parsedPrice > 0 ? parsedPrice.toLocaleString() : '?'} (BTC)
@@ -322,7 +322,7 @@ export default function BtcBuyModal({ onClose, btcSignal, btcPosition, currentMo
               </div>
 
               {/* Position preview */}
-              <div className="bg-slate-900/60 border border-slate-700 rounded-xl p-4 space-y-2">
+              <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 space-y-2">
                 <p className="text-slate-400 text-xs font-medium mb-3">Position Preview</p>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
@@ -361,14 +361,14 @@ export default function BtcBuyModal({ onClose, btcSignal, btcPosition, currentMo
               <div className="flex gap-3 pt-1">
                 <button
                   onClick={onClose}
-                  className="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-300 font-medium py-3 rounded-xl transition-colors"
+                  className="flex-1 bg-neutral-800 hover:bg-neutral-700 text-slate-300 font-medium py-3 rounded-xl transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleSubmit}
                   disabled={loading || parsedAmount <= 0 || parsedPrice <= 0 || unitsBought <= 0}
-                  className="flex-2 bg-orange-600 hover:bg-orange-500 disabled:bg-slate-700 disabled:text-slate-500 text-white font-bold py-3 px-6 rounded-xl transition-colors flex items-center justify-center gap-2 min-w-[140px]"
+                  className="flex-2 bg-orange-600 hover:bg-orange-500 disabled:bg-neutral-800/50 disabled:text-slate-500 text-white font-bold py-3 px-6 rounded-xl transition-colors flex items-center justify-center gap-2 min-w-[140px]"
                 >
                   {loading ? (
                     <>

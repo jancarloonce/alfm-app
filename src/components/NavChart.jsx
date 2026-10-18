@@ -36,7 +36,7 @@ const CustomTooltip = ({ active, payload, label }) => {
   const isDown = change < 0
 
   return (
-    <div className="bg-slate-900 border border-slate-600 rounded-lg px-4 py-3 shadow-xl text-sm">
+    <div className="bg-neutral-900 border border-neutral-700 rounded-lg px-4 py-3 text-sm">
       <p className="font-bold text-white mb-1">{d.date}</p>
       <p className="text-slate-300">
         NAVPU: <span className="font-bold text-white">₱{fmt(d.navpu, 2)}</span>
@@ -73,19 +73,27 @@ const BuyDot = (props) => {
 export default function NavChart({ navHistory, buys }) {
   const [showZones, setShowZones] = useState(true)
 
-  // Build buy lookup by date
-  const buyByDate = {}
-  buys.forEach((b) => {
-    if (!buyByDate[b.date]) buyByDate[b.date] = []
-    buyByDate[b.date].push(b)
-  })
-
   // Build chart data
   const sorted = [...navHistory].sort((a, b) => a.date.localeCompare(b.date))
+  const navDates = sorted.map((e) => e.date)
+
+  // Map each buy to the closest preceding (or equal) NAVPU history date
+  // Buy date is when you click "buy" (e.g. June 11), but the NAVPU entry is typically T-1 (June 10)
+  const buyByNavDate = {}
+  buys.forEach((b) => {
+    let matched = null
+    for (let j = navDates.length - 1; j >= 0; j--) {
+      if (navDates[j] <= b.date) { matched = navDates[j]; break }
+    }
+    if (!matched) return
+    if (!buyByNavDate[matched]) buyByNavDate[matched] = []
+    buyByNavDate[matched].push(b)
+  })
+
   const chartData = sorted.map((entry, i) => {
     const prev = i > 0 ? sorted[i - 1].navpu : null
     const dailyChange = prev !== null ? parseFloat((entry.navpu - prev).toFixed(4)) : 0
-    const buyEvents = buyByDate[entry.date] || []
+    const buyEvents = buyByNavDate[entry.date] || []
     const isBuyEvent = buyEvents.length > 0
     const buyAmount = isBuyEvent ? buyEvents.reduce((sum, b) => sum + b.amount, 0) : undefined
 
@@ -120,8 +128,8 @@ export default function NavChart({ navHistory, buys }) {
             onClick={() => setShowZones((v) => !v)}
             className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
               showZones
-                ? 'bg-slate-700 border-slate-500 text-slate-300'
-                : 'bg-transparent border-slate-700 text-slate-500'
+                ? 'bg-neutral-800 border-neutral-700 text-slate-300'
+                : 'bg-transparent border-neutral-800 text-slate-500'
             }`}
           >
             {showZones ? 'Zones ON' : 'Zones OFF'}

@@ -1,24 +1,39 @@
 # ALFM Fund Tracker
 
-Personal investment tracker for **ALFM Global Multi-Asset Income Fund (PHP)**:a BlackRock-backed mutual fund distributed by BPI in the Philippines.
+Multi-fund investment tracker for Philippine UITFs and BTC. Tracks **ALFM**, **MGPIFF**, **BPI Bond (BPIBGIF)**, **MREIT**, and **BTC** with daily buy signals, email alerts, dividend tracking, and backtesting.
+
+Live at [alfm-tracker.web.app](https://alfm-tracker.web.app)
 
 ## What it does
 
-- Scrapes the latest NAVPU every morning at **9:00 AM Asia/Manila**
-- Runs a rule-based signal engine to produce a daily buy recommendation
-- Sends a signal email with the recommended action and peso amount
-- Tracks your position, buy history, and unrealized gain/loss in real time
-- Displays monthly dividend history and estimates future payouts
-- Backtests the signal strategy against historical NAVPU data (runs on the 1st and 15th of each month)
+- Scrapes the latest NAVPU daily at **4:00 PM Asia/Manila** (ALFM, MGPIFF, BPIBGIF)
+- Runs a rule-based signal engine per fund to produce daily buy recommendations
+- Sends a consolidated signal email with recommended actions and peso amounts
+- Tracks positions, buy history, and unrealized gain/loss per fund in real time
+- Displays monthly dividend history and estimates future payouts per fund
+- Backtests each fund's signal strategy against historical NAVPU data (1st and 15th of each month)
+- Monitors BTC price hourly with drawdown-based buy signals
+
+## Funds tracked
+
+| Tab | Fund | Source | Signal Type |
+|-----|------|--------|-------------|
+| Overview | All funds combined | — | Portfolio summary, allocation chart |
+| ALFMGMP | ALFM Global Multi-Asset Income Fund (PHP) | alfmmutualfunds.com + BPI fallback | Percentile-based tiers |
+| MGPIFF | Manulife Global Preferred Income Feeder Fund | uitf.com.ph (fund_id=357) | Percentile-based tiers |
+| BPIBGIF | BPI Global Bond Income Fund (PHP) | uitf.com.ph (fund_id=558) | Percentile-based tiers |
+| MREIT | Manulife Global REIT Feeder Fund (PHP Unhedged) | uitf.com.ph | Percentile-based tiers |
+| BTC | Bitcoin | External price APIs | Drawdown from 30d high |
 
 ## Stack
 
-- **Frontend:** React + Vite + Tailwind CSS
-- **Backend:** Firebase Cloud Functions v2 (Node.js)
+- **Frontend:** React 18 + Vite + Tailwind CSS + Recharts
+- **Backend:** Firebase Cloud Functions v2 (Node.js 20)
 - **Database:** Firestore (real-time listeners)
 - **Hosting:** Firebase Hosting
 - **Email:** Nodemailer via Gmail SMTP
-- **Scraping:** Puppeteer (headless Chrome)
+- **Scraping:** Puppeteer (ALFM), uitf.com.ph JSON API (MGPIFF, BPIBGIF, MREIT)
+- **Design:** Vercel/Linear-inspired dark UI — solid surfaces, subtle borders, no decorative effects
 
 ## Project structure
 
@@ -26,30 +41,59 @@ Personal investment tracker for **ALFM Global Multi-Asset Income Fund (PHP)**:a 
 alfm-app/
   src/
     components/
-      SignalCard.jsx       # Daily buy signal + NAVPU display
-      PositionCard.jsx     # Portfolio position summary
-      NavpuCard.jsx        # NAVPU stats (90-day high/low/mean)
-      NavChart.jsx         # 90-day NAVPU chart with buy markers
-      DividendCard.jsx     # Dividend history and upcoming payouts
-      BuyLog.jsx           # Buy transaction history
-      BuyModal.jsx         # Log a new buy
-      BacktestCard.jsx     # Strategy backtest results
+      PortfolioDashboard.jsx  # Overview: all funds combined
+      SignalCard.jsx           # UITF daily buy signal
+      PositionCard.jsx         # UITF portfolio position
+      NavpuCard.jsx            # NAVPU stats (90-day high/low/mean)
+      NavChart.jsx             # 90-day NAVPU chart with buy markers
+      DividendCard.jsx         # ALFM dividend history
+      MgpiffDividendCard.jsx   # MGPIFF dividend history
+      BpibondDividendCard.jsx  # BPIBGIF dividend history
+      MreitDividendCard.jsx    # MREIT dividend history
+      BuyLog.jsx               # UITF buy transaction history
+      BuyModal.jsx             # ALFM buy modal
+      MgpiffBuyModal.jsx       # MGPIFF buy modal
+      BpibondBuyModal.jsx      # BPIBGIF buy modal
+      MreitBuyModal.jsx        # MREIT buy modal
+      BacktestCard.jsx         # Shared backtest results (parameterized)
+      BtcSignalCard.jsx        # BTC signal display
+      BtcPositionCard.jsx      # BTC position + P&L
+      BtcBuyLog.jsx            # BTC buy history
+      BtcSellLog.jsx           # BTC sell history
+      BtcBuyModal.jsx          # BTC buy modal
+      BtcSellModal.jsx         # BTC sell modal
+      BtcBacktestCard.jsx      # BTC backtest results
+      BtcPriceChart.jsx        # BTC price chart
     lib/
-      firebase.js          # Firestore + Functions client init
+      firebase.js              # Firestore + Functions client init
     App.jsx
   functions/
-    index.js               # Cloud Function exports
-    signalEngine.js        # Pure signal logic (no Firebase)
-    backtest.js            # Backtest engine
-    emailer.js             # HTML email builder + sender
-    scraper.js             # Puppeteer NAVPU scraper
-    historical_navpu_data.js  # 1,121 NAVPU entries (2021-2026)
-  SIGNAL_ENGINE.md         # Full signal engine documentation
+    index.js                   # Cloud Function exports
+    signalEngine.js            # ALFM signal logic
+    mgpiffSignalEngine.js      # MGPIFF signal logic
+    bpibondSignalEngine.js     # BPIBGIF signal logic
+    mreitSignalEngine.js       # MREIT signal logic
+    btcSignalEngine.js         # BTC drawdown signal logic
+    backtest.js                # ALFM backtest engine
+    mgpiffBacktest.js          # MGPIFF backtest engine
+    bpibondBacktest.js         # BPIBGIF backtest engine
+    mreitBacktest.js           # MREIT backtest engine
+    btcBacktest.js             # BTC backtest engine
+    emailer.js                 # HTML email builder + sender
+    scraper.js                 # Puppeteer NAVPU scraper (ALFM)
+    mgpiffScraper.js           # MGPIFF NAVPU scraper
+    bpibondScraper.js          # BPIBGIF NAVPU scraper
+    mreitScraper.js            # MREIT NAVPU scraper
+    historical_navpu_data.js   # ALFM historical NAVPU entries
+  SIGNAL_ENGINE.md             # ALFM signal engine documentation
+  btc_signal_engine.md         # BTC signal engine documentation
+  buy-strategy.md              # ALFM buy strategy reference
+  SETUP.md                     # Setup guide
 ```
 
-## Signal engine
+## Signal engine (UITFs)
 
-The signal engine is a pure function that takes today's NAVPU and context data and returns one of:
+Each UITF fund uses a percentile-based signal engine with dynamic thresholds computed from the 90-day rolling NAVPU window.
 
 | Signal | Meaning | Amount |
 |---|---|---|
@@ -63,80 +107,73 @@ The signal engine is a pure function that takes today's NAVPU and context data a
 | NO_SECOND_BUY | 1 buy done, no exception | 0 |
 | MONTHLY_CAP | 2 buys done this month | 0 |
 
-Tier boundaries are **dynamic**:computed from the 75th/60th/45th/30th percentiles of the rolling 90-day NAVPU window. See `SIGNAL_ENGINE.md` for full documentation.
+Bucket system: dividend bucket (1/month), opportunity bucket (2/month), extreme_override. See `SIGNAL_ENGINE.md` for full documentation.
+
+## BTC signal engine
+
+Drawdown-based buy-only strategy. See `btc_signal_engine.md` for full documentation.
+
+| Drawdown from 30d high | Signal | Amount |
+|---|---|---|
+| < 3% | NO_BUY | ₱0 |
+| 3–5% | BUY | ₱500 |
+| 5–10% | BUY_MORE | ₱750 |
+| 10–15% | AGGRESSIVE | ₱1,000 |
+| ≥ 15% | PRIORITY_BUY | ₱1,000 |
 
 ## Cloud Functions
 
+### Per UITF fund (ALFM, MGPIFF, BPIBGIF, MREIT)
+
 | Function | Trigger | Description |
 |---|---|---|
-| `dailyNavpuCheck` | 9:00 AM daily (Asia/Manila) | Scrapes NAVPU, generates signal, detects dividends, sends email |
-| `recordBuy` | onCall | Logs a buy and updates position |
-| `scheduledBacktest` | 1st and 15th of month, 10:00 AM | Re-runs backtest and updates Firestore |
-| `runBacktest` | HTTP GET/POST | Manual backtest trigger |
-| `seedHistoricalNavpu` | HTTP GET/POST | One-time seed of 1,121 historical NAVPU entries |
-| `seedDividends` | HTTP GET/POST | One-time seed of 20 historical dividend records |
-| `seedInitialData` | HTTP GET/POST | One-time seed of initial position and config |
+| `daily[Fund]Check` | 4:00 PM daily (Asia/Manila) | Scrapes NAVPU, generates signal, detects dividends, sends email |
+| `record[Fund]Buy` | onCall | Logs a buy and updates position (supports pending buys) |
+| `confirmPendingBuy` | onCall | Confirms a pending buy with actual NAVPU |
+| `recalc[Fund]Position` | HTTP | Rebuilds position from all buys |
+| `run[Fund]Backtest` | HTTP | Manual backtest trigger |
+| `scheduled[Fund]Backtest` | 1st/15th of month, 11:00 AM | Scheduled backtest |
+| `seed[Fund]Data` | HTTP | One-time data seed |
+
+### BTC
+
+| Function | Trigger | Description |
+|---|---|---|
+| `btcHourlySignalCheck` | Hourly | Checks BTC price, generates drawdown signal, sends email on buy |
+| `recordBtcBuy` / `recordBtcSell` | onCall | Logs BTC transactions |
+| `runBtcBacktest` | HTTP | Manual BTC backtest trigger |
+| `scheduledBtcBacktest` | 1st/15th of month | Scheduled BTC backtest |
 
 ## Setup
 
-### 1. Install dependencies
+See `SETUP.md` for the full setup guide.
 
 ```bash
-npm install
-cd functions && npm install
-```
-
-### 2. Configure Firebase
-
-```bash
-firebase login
-firebase use alfm-tracker
-```
-
-### 3. Set Gmail secrets
-
-```bash
+npm install && cd functions && npm install && cd ..
+firebase login && firebase use alfm-tracker
 firebase functions:secrets:set GMAIL_USER
 firebase functions:secrets:set GMAIL_PASS
-```
-
-### 4. Deploy
-
-```bash
-firebase deploy
-```
-
-### 5. Seed historical data (one-time)
-
-```bash
-curl https://us-central1-alfm-tracker.cloudfunctions.net/seedHistoricalNavpu
-curl https://us-central1-alfm-tracker.cloudfunctions.net/seedDividends
-curl https://us-central1-alfm-tracker.cloudfunctions.net/runBacktest
-```
-
-### 6. Local development
-
-```bash
-npm run dev
+npm run build && firebase deploy
 ```
 
 ## Firestore collections
 
+Each fund uses prefixed collections (`mgpiff_`, `bpibond_`, `mreit_`, `btc_`). ALFM uses unprefixed names.
+
 | Collection | Description |
 |---|---|
-| `navpu_history/{date}` | Daily NAVPU records |
-| `signals/{date}` | Daily signal output |
-| `position/current` | Current portfolio position |
-| `buys/{id}` | Buy transaction log |
-| `dividends/{record_date}` | Dividend history (auto-detected + seeded) |
-| `config/thresholds` | Dynamic tier thresholds |
-| `config/backtest_summary` | Latest backtest summary stats |
-| `backtest_results/{date}` | Per-day backtest results |
+| `[prefix]navpu_history/{date}` | Daily NAVPU records |
+| `[prefix]signals/{date}` | Daily signal output |
+| `[prefix]position/current` | Current portfolio position |
+| `[prefix]buys/{id}` | Buy transaction log |
+| `[prefix]dividends/{record_date}` | Dividend history |
+| `[prefix]config/thresholds` | Dynamic tier thresholds |
+| `[prefix]config/backtest_summary` | Latest backtest summary |
 
 ## Notes
 
-- NAVPU is published with a **1-day lag** by BPI. The 9 AM signal uses the previous business day's closing NAVPU.
+- NAVPU is published with a **1-day lag** by BPI. The 4 PM signal uses the previous business day's closing NAVPU.
 - Orders placed **before 2:00 PM** execute at today's NAVPU. After 2 PM executes at next business day's NAVPU.
-- The fund has a **180-day lock-up** on new units.
-- Monthly dividend record dates are approximately the last business day of each month.
-- Dividend docs are auto-detected from the NAVPU ex-dividend drop the morning after each record date.
+- ALFM has a **180-day lock-up** on new units. Early redemption = 1% fee.
+- Dividend record dates vary per fund: ALFM last business day, MGPIFF 7th trading day, BPIBGIF last business day, MREIT 7th trading day.
+- BTC signals check hourly with a 1-hour minimum gap between actionable signals and ₱10k/month budget cap.

@@ -19,7 +19,7 @@ function fmtPeso(n, decimals = 2) {
   )
 }
 
-export default function PositionCard({ position, todayNavpu, monthlyBuyCount, dividendBuyDone }) {
+export default function PositionCard({ position, todayNavpu, monthlyBuyCount, dividendBuyDone, rspBuyDone }) {
   if (!position) {
     return (
       <div className="card">
@@ -60,7 +60,7 @@ export default function PositionCard({ position, todayNavpu, monthlyBuyCount, di
                     ? 'bg-red-500 border-red-400'
                     : dot.filled
                     ? 'bg-emerald-500 border-emerald-400'
-                    : 'bg-transparent border-slate-600'
+                    : 'bg-transparent border-neutral-800'
                 }`}
               />
             ))}
@@ -72,13 +72,29 @@ export default function PositionCard({ position, todayNavpu, monthlyBuyCount, di
           <div className="flex items-center gap-1" title={dividendBuyDone ? 'Dividend buy used this month' : 'Dividend buy available'}>
             <div
               className={`w-2.5 h-2.5 rounded-full border-2 transition-colors ${
-                dividendBuyDone ? 'bg-amber-500 border-amber-400' : 'bg-transparent border-slate-600'
+                dividendBuyDone ? 'bg-amber-500 border-amber-400' : 'bg-transparent border-neutral-800'
               }`}
             />
             <span className={`text-xs ${dividendBuyDone ? 'text-amber-500' : 'text-slate-500'}`}>
               Div {dividendBuyDone ? '1/1' : '0/1'}
             </span>
           </div>
+          {/* RSP bucket (BPI Bond only) */}
+          {rspBuyDone !== undefined && (
+            <>
+              <span className="text-slate-700 text-xs">·</span>
+              <div className="flex items-center gap-1" title={rspBuyDone ? 'RSP ₱1k done this month' : 'RSP ₱1k pending'}>
+                <div
+                  className={`w-2.5 h-2.5 rounded-full border-2 transition-colors ${
+                    rspBuyDone ? 'bg-violet-500 border-violet-400' : 'bg-transparent border-neutral-800'
+                  }`}
+                />
+                <span className={`text-xs ${rspBuyDone ? 'text-violet-400' : 'text-slate-500'}`}>
+                  RSP {rspBuyDone ? '1/1' : '0/1'}
+                </span>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -94,7 +110,7 @@ export default function PositionCard({ position, todayNavpu, monthlyBuyCount, di
           </div>
         </div>
 
-        <div className="border-t border-slate-700 pt-3 space-y-2">
+        <div className="border-t border-neutral-800 pt-3 space-y-2">
           <div className="flex justify-between">
             <span className="text-slate-400 text-sm">Total Cost</span>
             <span className="text-slate-200 text-sm font-medium">{fmtPeso(totalCost, 2)}</span>
@@ -103,7 +119,7 @@ export default function PositionCard({ position, todayNavpu, monthlyBuyCount, di
             <span className="text-slate-400 text-sm">Market Value</span>
             <span className="text-slate-200 text-sm font-medium">{fmtPeso(marketValue, 2)}</span>
           </div>
-          <div className="flex justify-between items-center pt-1 border-t border-slate-700">
+          <div className="flex justify-between items-center pt-1 border-t border-neutral-800">
             <span className="text-slate-400 text-sm">Unrealized {isGain ? 'Gain' : 'Loss'}</span>
             <div className="text-right">
               <p

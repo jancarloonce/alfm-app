@@ -220,18 +220,39 @@ async function scrapeFromAffinity() {
 }
 
 /**
- * Main scraper:tries primary URL, then fallback.
+ * Main scraper: tries Affinity API, then primary URL, then BPI fallback.
+ * When expectedDate is provided, a result whose effectiveDate is older than
+ * expectedDate is considered stale and the next source is tried instead.
  * Returns null on total failure (does not throw).
  *
- * @returns {Promise<{navpu: number|null, source: string|null, error: string|null}>}
+ * @param {string} [expectedDate] - YYYY-MM-DD of the NAVPU we expect (last business day)
+ * @returns {Promise<{navpu: number|null, effectiveDate: string|null, source: string|null, error: string|null}>}
  */
-async function scrapeNavpu() {
+async function scrapeNavpu(expectedDate) {
+  function isStale(effectiveDate) {
+    return expectedDate && effectiveDate && effectiveDate < expectedDate
+  }
+
+  // Track the best (most recent) stale result across all sources
+  let bestStale = null
+  function trackStale(result) {
+    if (!bestStale || (result.effectiveDate && (!bestStale.effectiveDate || result.effectiveDate > bestStale.effectiveDate))) {
+      bestStale = result
+    }
+  }
+
   // Try Affinity API first — no browser needed, fastest
   const affinity = await scrapeFromAffinity()
   if (affinity.navpu !== null) {
-    return affinity
+    if (isStale(affinity.effectiveDate)) {
+      console.log(`[scraper] Affinity API data is stale (got ${affinity.effectiveDate}, expected ${expectedDate}) — trying browser sources`)
+      trackStale(affinity)
+    } else {
+      return affinity
+    }
+  } else {
+    console.log('[scraper] Affinity API failed:', affinity.error, '— falling back to browser sources')
   }
-  console.log('[scraper] Affinity API failed:', affinity.error, '— falling back to browser sources')
 
   let browser = null
   try {
@@ -243,9 +264,15 @@ async function scrapeNavpu() {
       const { navpu, effectiveDate } = await scrapeFromUrl(browser, PRIMARY_URL)
       if (navpu !== null) {
         console.log('[scraper] Primary source returned NAVPU:', navpu, 'date:', effectiveDate)
-        return { navpu, effectiveDate, source: 'alfmmutualfunds.com', error: null }
+        if (isStale(effectiveDate)) {
+          console.log(`[scraper] Primary source data is stale (got ${effectiveDate}, expected ${expectedDate}) — trying fallback`)
+          trackStale({ navpu, effectiveDate, source: 'alfmmutualfunds.com', error: null })
+        } else {
+          return { navpu, effectiveDate, source: 'alfmmutualfunds.com', error: null }
+        }
+      } else {
+        console.log('[scraper] Primary source returned null, trying fallback...')
       }
-      console.log('[scraper] Primary source returned null, trying fallback...')
     } catch (primaryErr) {
       console.error('[scraper] Primary source error:', primaryErr.message)
     }
@@ -256,18 +283,30 @@ async function scrapeNavpu() {
       const { navpu, effectiveDate } = await scrapeFromUrl(browser, FALLBACK_URL)
       if (navpu !== null) {
         console.log('[scraper] Fallback source returned NAVPU:', navpu, 'date:', effectiveDate)
-        return { navpu, effectiveDate, source: 'bpi.com.ph', error: null }
+        if (isStale(effectiveDate)) {
+          console.log(`[scraper] Fallback source data is also stale (got ${effectiveDate}, expected ${expectedDate})`)
+          trackStale({ navpu, effectiveDate, source: 'bpi.com.ph', error: null })
+        } else {
+          return { navpu, effectiveDate, source: 'bpi.com.ph', error: null }
+        }
+      } else {
+        console.log('[scraper] Fallback source also returned null.')
       }
-      console.log('[scraper] Fallback source also returned null.')
     } catch (fallbackErr) {
       console.error('[scraper] Fallback source error:', fallbackErr.message)
-      return { navpu: null, effectiveDate: null, source: null, error: fallbackErr.message }
+    }
+
+    // All sources exhausted — return the best stale result instead of failing
+    if (bestStale) {
+      console.log(`[scraper] Returning best stale result: ${bestStale.navpu} from ${bestStale.source} (${bestStale.effectiveDate}, expected ${expectedDate})`)
+      return bestStale
     }
 
     return { navpu: null, effectiveDate: null, source: null, error: 'Could not extract NAVPU from any source' }
   } catch (err) {
     console.error('[scraper] Browser launch error:', err.message)
-    return { navpu: null, source: null, error: err.message }
+    if (bestStale) return bestStale
+    return { navpu: null, effectiveDate: null, source: null, error: err.message }
   } finally {
     if (browser) {
       await browser.close().catch(() => {})

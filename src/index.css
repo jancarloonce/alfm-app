@@ -4,21 +4,30 @@
 
 @layer base {
   body {
-    @apply bg-slate-900 text-slate-100 antialiased;
+    @apply bg-[#0a0a0a] text-neutral-100 antialiased;
+    min-height: 100vh;
   }
 }
 
 @layer components {
   .card {
-    @apply bg-slate-800 rounded-xl p-5 border border-slate-700;
+    @apply bg-neutral-900 border border-neutral-800 rounded-lg p-5;
+  }
+
+  .glass-section {
+    @apply bg-neutral-900 border border-neutral-800 rounded-lg p-6;
+  }
+
+  .glass-inner {
+    @apply bg-neutral-950 border border-neutral-800 rounded-md;
   }
 
   .label {
-    @apply text-slate-400 text-xs font-medium uppercase tracking-wide;
+    @apply text-neutral-500 text-xs font-medium uppercase tracking-wide;
   }
 
   .value {
-    @apply text-slate-100 text-lg font-semibold;
+    @apply text-neutral-100 text-lg font-semibold;
   }
 
   .badge {

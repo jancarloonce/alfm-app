@@ -51,6 +51,7 @@ const HORIZON_ROWS = [
   { label: '12h', pctKey: 'pctPositiveReturn12h', avgKey: 'avgReturn12h' },
   { label: '24h', pctKey: 'pctPositiveReturn24h', avgKey: 'avgReturn24h' },
   { label: '72h', pctKey: 'pctPositiveReturn72h', avgKey: 'avgReturn72h' },
+  { label: '30d', pctKey: 'pctPositiveReturn30d', avgKey: 'avgReturn30d' },
 ]
 
 function StatRow({ label, value, valueClass = 'text-slate-200' }) {
@@ -70,7 +71,7 @@ const EquityTooltip = ({ active, payload }) => {
   if (!active || !payload?.length) return null
   const d = payload[0]?.payload
   return (
-    <div className="bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-xs shadow-xl">
+    <div className="bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-xs">
       <p className="text-slate-400 mb-0.5">{d?.timestamp?.slice(0, 10)}</p>
       <p className="text-white font-bold">{fmtPhp(d?.portfolioPhp)}</p>
       <p className="text-slate-400">{fmtUsd(d?.btcPrice)}/BTC</p>
@@ -144,13 +145,13 @@ export default function BtcBacktestCard() {
       </div>
 
       {/* Tab switcher */}
-      <div className="flex bg-slate-700/60 rounded-lg p-0.5 gap-0.5 mb-4">
+      <div className="flex bg-neutral-800/50 rounded-lg p-0.5 gap-0.5 mb-4">
         {[['overview', 'Overview'], ['winrates', 'Win Rates'], ['signals', 'Signals']].map(([key, label]) => (
           <button
             key={key}
             onClick={() => setTab(key)}
             className={`flex-1 py-1 rounded-md text-xs font-semibold transition-all ${
-              tab === key ? 'bg-slate-600 text-white' : 'text-slate-400 hover:text-slate-200'
+              tab === key ? 'bg-neutral-700 text-white' : 'text-slate-400 hover:text-slate-200'
             }`}
           >
             {label}
@@ -198,7 +199,7 @@ export default function BtcBacktestCard() {
           )}
 
           {/* Simulation result */}
-          <div className="bg-slate-700/40 rounded-lg p-3 border border-slate-600">
+          <div className="bg-neutral-900 rounded-lg p-3 border border-neutral-800">
             <SectionLabel>Simulated Portfolio (₱/USD {sim.phpPerUsd ?? 57.5}, fee {((sim.feeRate ?? 0.001) * 100).toFixed(1)}%)</SectionLabel>
             <div className="space-y-1.5">
               <StatRow label="BTC Held"     value={`₿ ${sim.btcAccumulated?.toFixed(6) ?? '-'}`} />
@@ -206,7 +207,7 @@ export default function BtcBacktestCard() {
               <StatRow label="Invested"     value={fmtPhp(sim.totalInvestedPhp)} />
               <StatRow label="Fees Paid"    value={fmtPhp(sim.totalFeesPaidPhp)} valueClass="text-slate-500" />
               <StatRow label="Portfolio"    value={fmtPhp(sim.portfolioPhp)} />
-              <div className="flex justify-between items-center pt-1 border-t border-slate-700">
+              <div className="flex justify-between items-center pt-1 border-t border-neutral-800">
                 <span className="text-slate-400 text-sm">Unrealized</span>
                 <div className="text-right">
                   <p className={`text-sm font-bold ${isGain ? 'text-green-400' : 'text-red-400'}`}>
@@ -227,7 +228,7 @@ export default function BtcBacktestCard() {
             <SectionLabel>Risk Metrics</SectionLabel>
             <div className="grid grid-cols-2 gap-2">
               {/* CAGR */}
-              <div className="bg-slate-700/40 rounded-lg p-3 border border-slate-600">
+              <div className="bg-neutral-900 rounded-lg p-3 border border-neutral-800">
                 <p className="label text-xs mb-1">CAGR</p>
                 <p className={`text-base font-bold ${(summary.cagr ?? 0) >= 7 ? 'text-green-400' : 'text-yellow-400'}`}>
                   {summary.cagr != null ? `${summary.cagr >= 0 ? '+' : ''}${summary.cagr.toFixed(1)}%` : '-'}
@@ -236,7 +237,7 @@ export default function BtcBacktestCard() {
               </div>
 
               {/* Sharpe */}
-              <div className="bg-slate-700/40 rounded-lg p-3 border border-slate-600">
+              <div className="bg-neutral-900 rounded-lg p-3 border border-neutral-800">
                 <p className="label text-xs mb-1">Sharpe Ratio</p>
                 <p className={`text-base font-bold ${SHARPE_COLOR[sr?.interpretation] ?? 'text-slate-300'}`}>
                   {sr?.annualized != null ? sr.annualized.toFixed(2) : '-'}
@@ -245,7 +246,7 @@ export default function BtcBacktestCard() {
               </div>
 
               {/* Max drawdown */}
-              <div className="bg-slate-700/40 rounded-lg p-3 border border-slate-600">
+              <div className="bg-neutral-900 rounded-lg p-3 border border-neutral-800">
                 <p className="label text-xs mb-1">Max Drawdown</p>
                 <p className={`text-base font-bold ${(dd.maxDrawdownPct ?? 0) > 50 ? 'text-red-400' : (dd.maxDrawdownPct ?? 0) > 15 ? 'text-yellow-400' : 'text-green-400'}`}>
                   {dd.maxDrawdownPct != null ? `-${dd.maxDrawdownPct.toFixed(1)}%` : '-'}
@@ -256,7 +257,7 @@ export default function BtcBacktestCard() {
               </div>
 
               {/* Avg drawdown */}
-              <div className="bg-slate-700/40 rounded-lg p-3 border border-slate-600">
+              <div className="bg-neutral-900 rounded-lg p-3 border border-neutral-800">
                 <p className="label text-xs mb-1">Avg Drawdown</p>
                 <p className="text-base font-bold text-slate-200">
                   {dd.avgDrawdownDays != null ? `${dd.avgDrawdownDays}d` : '-'}
@@ -269,7 +270,7 @@ export default function BtcBacktestCard() {
           </div>
 
           {/* Consecutive losses */}
-          <div className="bg-slate-700/40 rounded-lg p-3 border border-slate-600">
+          <div className="bg-neutral-900 rounded-lg p-3 border border-neutral-800">
             <SectionLabel>Consecutive Losing Buys (24h)</SectionLabel>
             <div className="flex gap-6">
               <div>
@@ -298,18 +299,19 @@ export default function BtcBacktestCard() {
           {/* Win Rate (Price Higher After) */}
           <div>
             <SectionLabel>Win Rate (Price Higher After)</SectionLabel>
-            <div className="grid grid-cols-4 gap-2">
+            <div className="grid grid-cols-5 gap-2">
               {[
                 { label: '1h',  pctKey: 'pctPositiveReturn1h',  avgKey: 'avgReturn1h'  },
                 { label: '6h',  pctKey: 'pctPositiveReturn6h',  avgKey: 'avgReturn6h'  },
                 { label: '24h', pctKey: 'pctPositiveReturn24h', avgKey: 'avgReturn24h' },
                 { label: '72h', pctKey: 'pctPositiveReturn72h', avgKey: 'avgReturn72h' },
+                { label: '30d', pctKey: 'pctPositiveReturn30d', avgKey: 'avgReturn30d' },
               ].map(({ label, pctKey, avgKey }) => {
                 const wr = summary[pctKey]
                 const ar = summary[avgKey]
                 const color = wr != null && wr >= 60 ? 'text-emerald-400' : wr != null && wr >= 50 ? 'text-yellow-400' : 'text-red-400'
                 return (
-                  <div key={label} className="bg-slate-700/40 rounded-lg p-2.5 border border-slate-600 text-center">
+                  <div key={label} className="bg-neutral-900 rounded-lg p-2.5 border border-neutral-800 text-center">
                     <p className={`text-lg font-bold ${color}`}>{pct(wr)}</p>
                     <p className="text-slate-500 text-xs mt-0.5">{label}</p>
                     {ar != null && (
@@ -322,6 +324,65 @@ export default function BtcBacktestCard() {
               })}
             </div>
           </div>
+
+          {/* 8% Recovery Headline */}
+          {summary.pctRecovered8pctIn30d != null && (
+            <div className={`rounded-lg p-4 border-2 text-center ${
+              summary.pctRecovered8pctIn30d >= 70 ? 'bg-emerald-900/30 border-emerald-500' :
+              summary.pctRecovered8pctIn30d >= 50 ? 'bg-yellow-900/30 border-yellow-600' :
+              'bg-red-900/30 border-red-600'
+            }`}>
+              <p className="text-slate-400 text-xs uppercase tracking-wider mb-1">8% Recovery Rate (30d)</p>
+              <p className={`text-3xl font-bold ${
+                summary.pctRecovered8pctIn30d >= 70 ? 'text-emerald-400' :
+                summary.pctRecovered8pctIn30d >= 50 ? 'text-yellow-400' :
+                'text-red-400'
+              }`}>
+                {pct(summary.pctRecovered8pctIn30d)}
+              </p>
+              <p className="text-slate-500 text-xs mt-1">
+                of buy signals hit +8% within 30 days
+              </p>
+              {summary.avgMaxReturn30d != null && (
+                <p className="text-slate-400 text-xs mt-0.5">
+                  Avg max return: <span className="text-white font-medium">{avgRet(summary.avgMaxReturn30d)}</span>
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Drawdown Analysis */}
+          {summary.drawdownAnalysis && summary.drawdownAnalysis.length > 0 && (
+            <div>
+              <SectionLabel>Recovery by Drawdown Level</SectionLabel>
+              <div className="space-y-2">
+                {summary.drawdownAnalysis.map((bucket) => {
+                  if (!bucket.totalCandles) return null
+                  const rate = bucket.recoveryRate ?? 0
+                  const rateColor = rate >= 70 ? 'text-emerald-400' : rate >= 50 ? 'text-yellow-400' : 'text-red-400'
+                  return (
+                    <div key={bucket.bucket} className="bg-neutral-900 rounded-lg p-3 border border-neutral-800">
+                      <div className="flex justify-between items-center mb-1.5">
+                        <span className="text-slate-300 text-xs font-semibold">{bucket.bucket} drawdown</span>
+                        <span className="text-slate-500 text-xs">{bucket.actionableCandles ?? bucket.totalCandles} signals</span>
+                      </div>
+                      <div className="flex gap-4 text-xs">
+                        <span>8% Recovery: <span className={`font-bold ${rateColor}`}>{pct(rate)}</span></span>
+                        <span>Avg Max: <span className="text-white font-bold">{avgRet(bucket.avgMaxReturn)}</span></span>
+                        <span>Avg 30d: <span className={`font-bold ${(bucket.avgReturn30d ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>{avgRet(bucket.avgReturn30d)}</span></span>
+                      </div>
+                      <div className="mt-1.5 bg-neutral-800 rounded-full h-1.5">
+                        <div
+                          className={`h-1.5 rounded-full ${rate >= 70 ? 'bg-emerald-500' : rate >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}
+                          style={{ width: `${Math.round(rate)}%` }}
+                        />
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -339,7 +400,7 @@ export default function BtcBacktestCard() {
                 return (
                   <div key={label} className="flex items-center gap-2">
                     <span className="text-slate-500 text-xs w-7">{label}</span>
-                    <div className="flex-1 bg-slate-700 rounded-full h-1.5">
+                    <div className="flex-1 bg-neutral-800 rounded-full h-1.5">
                       <div className={`h-1.5 rounded-full ${barColor}`} style={{ width: `${bar}%` }} />
                     </div>
                     <span className="text-slate-300 text-xs w-10 text-right">{pct(wr)}</span>
@@ -359,7 +420,7 @@ export default function BtcBacktestCard() {
               <div className="space-y-2">
                 {Object.entries(summary.bucketWinRates).map(([bucket, stats]) => (
                   stats.count > 0 && (
-                    <div key={bucket} className="bg-slate-700/40 rounded-lg p-3 border border-slate-600">
+                    <div key={bucket} className="bg-neutral-900 rounded-lg p-3 border border-neutral-800">
                       <div className="flex justify-between mb-1">
                         <span className="text-slate-300 text-xs font-medium">{bucket.replace(/_/g, ' ')}</span>
                         <span className="text-slate-500 text-xs">{stats.count} buys</span>
@@ -376,7 +437,7 @@ export default function BtcBacktestCard() {
           )}
 
           {/* Hold signal effectiveness */}
-          <div className="bg-slate-700/40 rounded-lg p-3 border border-slate-600">
+          <div className="bg-neutral-900 rounded-lg p-3 border border-neutral-800">
             <SectionLabel>NO_BUY Effectiveness</SectionLabel>
             <StatRow
               label={`Price fell within 6h (${summary.noBuyTotal ?? 0} signals)`}
@@ -401,7 +462,7 @@ export default function BtcBacktestCard() {
                     return (
                       <div key={sig} className="flex items-center gap-2">
                         <span className="text-slate-400 text-xs w-28 truncate">{sig.replace(/_/g, ' ')}</span>
-                        <div className="flex-1 bg-slate-700 rounded-full h-1.5">
+                        <div className="flex-1 bg-neutral-800 rounded-full h-1.5">
                           <div
                             className="h-1.5 rounded-full bg-orange-500"
                             style={{ width: `${pctOfTotal}%` }}
@@ -439,7 +500,7 @@ export default function BtcBacktestCard() {
 
           {/* Sharpe detail */}
           {sr && (
-            <div className="bg-slate-700/40 rounded-lg p-3 border border-slate-600">
+            <div className="bg-neutral-900 rounded-lg p-3 border border-neutral-800">
               <SectionLabel>Sharpe Ratio Detail</SectionLabel>
               <div className="space-y-1">
                 <StatRow label="Annualized Sharpe" value={sr.annualized?.toFixed(2)} valueClass={SHARPE_COLOR[sr.interpretation] ?? 'text-slate-300'} />

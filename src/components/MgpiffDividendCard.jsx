@@ -22,10 +22,17 @@ function nth7thBizDay(year, month) {
   return null
 }
 
-/**
- * Compute the next `count` MGPIFF distribution dates algorithmically
- * (7th PH business day of each upcoming month, est. badge shown).
- */
+function mostRecentDistDate(todayStr) {
+  const now = new Date(todayStr + 'T00:00:00')
+  let year = now.getFullYear()
+  let month = now.getMonth()
+  const thisMonth = nth7thBizDay(year, month)
+  if (thisMonth && thisMonth <= todayStr) return thisMonth
+  month--
+  if (month < 0) { month = 11; year-- }
+  return nth7thBizDay(year, month)
+}
+
 function computeUpcomingDistributionDates(todayStr, count = 4) {
   const results = []
   const now = new Date(todayStr + 'T00:00:00')
@@ -72,6 +79,8 @@ export default function MgpiffDividendCard({ todayStr, buys = [], currentNavpu =
   const [logUnits, setLogUnits] = useState('')
   const [logDate, setLogDate] = useState('')
   const [logPaymentDate, setLogPaymentDate] = useState('')
+  const [logUnitIncome, setLogUnitIncome] = useState('')
+  const [logNavpu, setLogNavpu] = useState('')
   const [logSaving, setLogSaving] = useState(false)
   const [logError, setLogError] = useState(null)
   const [logSuccess, setLogSuccess] = useState(false)
@@ -87,7 +96,7 @@ export default function MgpiffDividendCard({ todayStr, buys = [], currentNavpu =
 
   const pastDistributions = distributions
     .map((r) => ({ ...r, date: r.date || r.id }))
-    .filter((r) => r.date < todayStr && r.confirmed)
+    .filter((r) => r.date <= todayStr && r.confirmed)
 
   const allDates = distributions.map((r) => r.date || r.id)
 
@@ -128,10 +137,13 @@ export default function MgpiffDividendCard({ todayStr, buys = [], currentNavpu =
   const nextPaymentDate = nextDist ? addDays(nextDist.date, 8) : null
 
   function openLogForm() {
-    setLogDate(lastPast?.date ?? '')
-    setLogPaymentDate(lastPast?.paymentDate ?? '')
+    const defaultDate = mostRecentDistDate(todayStr)
+    setLogDate(defaultDate ?? '')
+    setLogPaymentDate(defaultDate ? addDays(defaultDate, 8) : '')
     setLogUnits(currentUnits > 0 ? String(currentUnits) : '')
     setLogEarned('')
+    setLogUnitIncome(lastPast?.unitIncome ? String(lastPast.unitIncome) : '')
+    setLogNavpu('')
     setLogError(null)
     setLogSuccess(false)
     setShowLogForm(true)
@@ -141,13 +153,15 @@ export default function MgpiffDividendCard({ todayStr, buys = [], currentNavpu =
     const earned = parseFloat(logEarned)
     const units = parseFloat(logUnits)
     if (!logDate) { setLogError('Distribution date is required.'); return }
-    if (!earned || earned <= 0) { setLogError('Enter the amount (₱) received from GCash.'); return }
+    if (!earned || earned <= 0) { setLogError('Enter the amount (₱) received.'); return }
     if (!units || units <= 0) { setLogError('Enter your units held at the distribution date.'); return }
 
-    // Look up unitIncome from historical data for this date (if available)
+    const formUnitIncome = logUnitIncome ? parseFloat(logUnitIncome) : null
+    const formNavpu = logNavpu ? parseFloat(logNavpu) : null
+
     const historical = distributions.find((d) => (d.date || d.id) === logDate)
-    const unitIncome = historical?.unitIncome ?? null
-    const navpuAtDist = unitIncome && units > 0 ? parseFloat((earned / (units * unitIncome)).toFixed(4)) : null
+    const unitIncome = formUnitIncome ?? historical?.unitIncome ?? null
+    const navpuAtDist = formNavpu ?? (unitIncome && units > 0 ? parseFloat((earned / (units * unitIncome)).toFixed(4)) : null)
 
     const rd = new Date(logDate + 'T00:00:00')
     rd.setMonth(rd.getMonth() + 1)
@@ -196,7 +210,7 @@ export default function MgpiffDividendCard({ todayStr, buys = [], currentNavpu =
         <div className="flex items-center gap-2">
           <button
             onClick={openLogForm}
-            className="text-xs px-2 py-0.5 rounded border border-slate-600 text-slate-400 hover:text-slate-200 hover:border-slate-500 transition-colors"
+            className="text-xs px-2 py-0.5 rounded border border-neutral-800 text-slate-400 hover:text-slate-200 hover:border-neutral-700 transition-colors"
           >
             + Log
           </button>
@@ -215,7 +229,7 @@ export default function MgpiffDividendCard({ todayStr, buys = [], currentNavpu =
 
       {/* Log form */}
       {showLogForm && (
-        <div className="bg-slate-700/40 border border-slate-600 rounded-xl p-4 space-y-3">
+        <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 space-y-3">
           <p className="text-slate-300 text-sm font-semibold">Log GCash Payout</p>
           {logSuccess && (
             <div className="bg-emerald-900/50 border border-emerald-700 rounded-lg px-3 py-2 text-emerald-300 text-sm text-center font-semibold">Saved!</div>
@@ -229,34 +243,51 @@ export default function MgpiffDividendCard({ todayStr, buys = [], currentNavpu =
                 <div>
                   <label className="text-slate-500 text-xs block mb-1">Distribution Date</label>
                   <input type="date" value={logDate} onChange={(e) => setLogDate(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-2 py-1.5 text-white text-xs focus:outline-none focus:border-blue-500" />
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-2 py-1.5 text-white text-xs focus:outline-none focus:border-blue-500" />
                 </div>
                 <div>
                   <label className="text-slate-500 text-xs block mb-1">GCash Credit Date</label>
                   <input type="date" value={logPaymentDate} onChange={(e) => setLogPaymentDate(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-2 py-1.5 text-white text-xs focus:outline-none focus:border-blue-500" />
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-2 py-1.5 text-white text-xs focus:outline-none focus:border-blue-500" />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="text-slate-500 text-xs block mb-1">Received (₱ from GCash)</label>
+                  <label className="text-slate-500 text-xs block mb-1">Payout Received (₱)</label>
                   <div className="relative">
                     <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 text-xs">₱</span>
                     <input type="number" value={logEarned} onChange={(e) => setLogEarned(e.target.value)}
-                      className="w-full bg-slate-900 border border-slate-600 rounded-lg pl-5 pr-2 py-1.5 text-white text-xs focus:outline-none focus:border-blue-500"
+                      className="w-full bg-neutral-950 border border-neutral-800 rounded-lg pl-5 pr-2 py-1.5 text-white text-xs focus:outline-none focus:border-blue-500"
                       placeholder="0.00" step="0.01" />
                   </div>
                 </div>
                 <div>
-                  <label className="text-slate-500 text-xs block mb-1">Units at Dist. Date</label>
+                  <label className="text-slate-500 text-xs block mb-1">Units Held at Dist.</label>
                   <input type="number" value={logUnits} onChange={(e) => setLogUnits(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-2 py-1.5 text-white text-xs focus:outline-none focus:border-blue-500"
-                    placeholder="0.00" step="0.001" />
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-2 py-1.5 text-white text-xs focus:outline-none focus:border-blue-500"
+                    placeholder="0.00" step="0.0001" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-slate-500 text-xs block mb-1">Unit Income (per unit held)</label>
+                  <input type="number" value={logUnitIncome} onChange={(e) => setLogUnitIncome(e.target.value)}
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-2 py-1.5 text-white text-xs focus:outline-none focus:border-blue-500"
+                    placeholder="e.g. 0.0045" step="0.0001" />
+                </div>
+                <div>
+                  <label className="text-slate-500 text-xs block mb-1">NAVPU at Distribution</label>
+                  <div className="relative">
+                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 text-xs">₱</span>
+                    <input type="number" value={logNavpu} onChange={(e) => setLogNavpu(e.target.value)}
+                      className="w-full bg-neutral-950 border border-neutral-800 rounded-lg pl-5 pr-2 py-1.5 text-white text-xs focus:outline-none focus:border-blue-500"
+                      placeholder="e.g. 54.3873" step="0.0001" />
+                  </div>
                 </div>
               </div>
               <div className="flex gap-2 pt-1">
                 <button onClick={() => setShowLogForm(false)}
-                  className="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs font-medium py-2 rounded-lg transition-colors">
+                  className="flex-1 bg-neutral-800 hover:bg-neutral-700 text-slate-300 text-xs font-medium py-2 rounded-lg transition-colors">
                   Cancel
                 </button>
                 <button onClick={handleLogDistribution} disabled={logSaving}
@@ -289,7 +320,7 @@ export default function MgpiffDividendCard({ todayStr, buys = [], currentNavpu =
           <p className="text-blue-400 font-black text-xl">{totalEarned > 0 ? fmtPeso(totalEarned) : '—'}</p>
           <p className="text-slate-500 text-xs mt-0.5">{pastDistributions.length} months logged</p>
         </div>
-        <div className="bg-slate-700/40 rounded-lg px-3 py-3 text-center">
+        <div className="bg-neutral-900 rounded-lg px-3 py-3 text-center">
           <p className="text-slate-400 text-xs mb-1">Est. Next Payout</p>
           <p className="text-white font-black text-xl">{estNextPayout ? fmtPeso(estNextPayout) : '—'}</p>
           <p className="text-slate-500 text-xs mt-0.5">
@@ -301,14 +332,14 @@ export default function MgpiffDividendCard({ todayStr, buys = [], currentNavpu =
       {/* Next distribution + payment */}
       {nextDist && (
         <div className="grid grid-cols-2 gap-3">
-          <div className="bg-slate-700/30 rounded-lg px-3 py-2">
+          <div className="bg-neutral-900 rounded-lg px-3 py-2">
             <p className="text-slate-500 text-xs mb-1">Next Distribution {nextDist.estimated && <span className="text-amber-400 text-xs">est.</span>}</p>
             <p className="text-white text-sm font-semibold">{formatDate(nextDist.date)}</p>
             <p className="text-slate-400 text-xs mt-0.5">
               {daysToNext > 0 ? `${daysToNext}d away` : daysToNext === 0 ? 'Today' : `${Math.abs(daysToNext)}d ago`}
             </p>
           </div>
-          <div className="bg-slate-700/30 rounded-lg px-3 py-2">
+          <div className="bg-neutral-900 rounded-lg px-3 py-2">
             <p className="text-slate-500 text-xs mb-1">Est. GCash Credit</p>
             <p className="text-white text-sm font-semibold">{nextPaymentDate ? formatDate(nextPaymentDate) : '—'}</p>
             <p className="text-slate-400 text-xs mt-0.5">~8 days after dist.</p>
@@ -320,27 +351,29 @@ export default function MgpiffDividendCard({ todayStr, buys = [], currentNavpu =
       {pastDistributions.length > 0 && (
         <>
           <button onClick={() => setShowHistory((v) => !v)}
-            className="w-full text-center text-slate-500 hover:text-slate-300 text-xs py-2 border border-slate-700 rounded transition-colors">
+            className="w-full text-center text-slate-500 hover:text-slate-300 text-xs py-2 border border-neutral-800 rounded transition-colors">
             {showHistory ? 'Hide' : 'Show'} distribution history ({pastDistributions.length} logged)
           </button>
           {showHistory && (
             <div className="space-y-1">
-              <div className="grid grid-cols-4 text-slate-600 text-xs px-2 pb-1">
+              <div className="grid grid-cols-5 text-slate-600 text-xs px-2 pb-1">
                 <span>Month</span>
+                <span className="text-right">Payout Date</span>
                 <span className="text-right">Units</span>
                 <span className="text-right">Income/unit</span>
                 <span className="text-right">Received</span>
               </div>
               {[...pastDistributions].reverse().map((r) => (
-                <div key={r.date} className="grid grid-cols-4 items-center rounded px-2 py-1.5 text-xs bg-slate-700/20">
+                <div key={r.date} className="grid grid-cols-5 items-center rounded px-2 py-1.5 text-xs bg-neutral-900">
                   <span className="text-slate-300 font-medium">{r.month}</span>
+                  <span className="text-slate-400 text-right">{r.paymentDate ? formatDateShort(r.paymentDate) : '—'}</span>
                   <span className="text-slate-400 text-right">{r.units?.toLocaleString('en-PH', { maximumFractionDigits: 2 }) ?? '—'}</span>
                   <span className="text-slate-400 text-right">{r.unitIncome ?? '—'}</span>
                   <span className="text-blue-400 font-semibold text-right">{r.earned ? fmtPeso(r.earned) : '—'}</span>
                 </div>
               ))}
-              <div className="grid grid-cols-4 border-t border-slate-700 pt-2 px-2 text-xs">
-                <span className="text-slate-400 font-medium col-span-3">Total</span>
+              <div className="grid grid-cols-5 border-t border-neutral-800 pt-2 px-2 text-xs">
+                <span className="text-slate-400 font-medium col-span-4">Total</span>
                 <span className="text-blue-400 font-black text-right">{totalEarned > 0 ? fmtPeso(totalEarned) : '—'}</span>
               </div>
             </div>
@@ -366,7 +399,7 @@ export default function MgpiffDividendCard({ todayStr, buys = [], currentNavpu =
       </div>
 
       {lastPast && (
-        <div className="border-t border-slate-700/60 pt-3 flex justify-between items-center">
+        <div className="border-t border-neutral-800/60 pt-3 flex justify-between items-center">
           <p className="text-slate-600 text-xs">Last distribution</p>
           <p className="text-slate-500 text-xs">{formatDateShort(lastPast.date)} · {daysSinceLast}d ago</p>
         </div>

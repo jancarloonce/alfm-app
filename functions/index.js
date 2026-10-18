@@ -12,14 +12,20 @@ const db = admin.firestore()
 
 const { scrapeNavpu } = require('./scraper')
 const { analyzeSignal, computeThresholds } = require('./signalEngine')
-const { analyzeSignal: analyzeBtcSignal, computeThresholds: computeBtcThresholds, analyzeSwingSignal, swingExitLevels, SWING } = require('./btcSignalEngine')
-const { sendSignalEmail, sendBtcSignalEmail, sendBtcSellEmail, sendMgpiffSignalEmail } = require('./emailer')
+const { analyzeSignal: analyzeBtcSignal } = require('./btcSignalEngine')
+const { sendSignalEmail, sendBtcSignalEmail, sendMgpiffSignalEmail, sendBpibondSignalEmail, sendMreitSignalEmail } = require('./emailer')
 const { scrapeMgpiffNavpu } = require('./mgpiffScraper')
 const { analyzeSignal: analyzeMgpiffSignal, computeMgpiffThresholds, MGPIFF_INITIAL_THRESHOLDS } = require('./mgpiffSignalEngine')
 const { HISTORICAL_NAVPU } = require('./historical_navpu_data')
 const { runBacktest } = require('./backtest')
 const { runBtcBacktest } = require('./btcBacktest')
 const { runMgpiffBacktest } = require('./mgpiffBacktest')
+const { scrapeBpibondNavpu, fetchNavpuRange: fetchBpibondNavpuRange, labelToDate: bpibondLabelToDate } = require('./bpibondScraper')
+const { analyzeSignal: analyzeBpibondSignal, computeBpibondThresholds, BPIBOND_INITIAL_THRESHOLDS } = require('./bpibondSignalEngine')
+const { runBpibondBacktest } = require('./bpibondBacktest')
+const { scrapeMreitNavpu, fetchNavpuRange: fetchMreitNavpuRange, labelToDate: mreitLabelToDate } = require('./mreitScraper')
+const { analyzeSignal: analyzeMreitSignal, computeMreitThresholds, MREIT_INITIAL_THRESHOLDS } = require('./mreitSignalEngine')
+const { runMreitBacktest } = require('./mreitBacktest')
 
 // Secrets:set via: firebase functions:config:set gmail.user="..." gmail.pass="..."
 // In v2, use defineSecret for proper secret management
@@ -327,6 +333,66 @@ function getMgpiffDistributionDates(todayStr) {
   return dates
 }
 
+/**
+ * Compute MREIT distribution dates (7th trading day of each month)
+ * Same pattern as MGPIFF.
+ */
+function getMreitDistributionDates(todayStr) {
+  const dates = []
+  const now = new Date(todayStr + 'T00:00:00')
+  for (let i = -2; i <= 3; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() + i, 1)
+    const date = nthTradingDayOfMonth(d.getFullYear(), d.getMonth(), 7)
+    if (date) dates.push(date)
+  }
+  return dates
+}
+
+/**
+ * Returns the last business day (Mon-Fri, non-holiday) of a given month.
+ */
+function lastBizDayOfMonth(year, month) {
+  let day = new Date(year, month + 1, 0).getDate()
+  while (true) {
+    const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    if (!isNonTradingDay(dateStr)) return dateStr
+    day--
+  }
+}
+
+/**
+ * Compute BPI Bond distribution record dates (last business day of each month).
+ */
+function getBpibondRecordDates(todayStr) {
+  const dates = []
+  const now = new Date(todayStr + 'T00:00:00')
+  for (let i = -2; i <= 3; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() + i, 1)
+    dates.push(lastBizDayOfMonth(d.getFullYear(), d.getMonth()))
+  }
+  return dates
+}
+
+/**
+ * Get the BPI Bond RSP (Regular Savings Plan) day for a given month.
+ * RSP is on the 18th of each month; if that's a non-trading day, use the next trading day.
+ * Returns null for months before October 2026 (RSP start).
+ */
+function getBpibondRspDay(year, month) {
+  if (year < 2026 || (year === 2026 && month < 9)) return null
+  const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-18`
+  if (!isNonTradingDay(dateStr)) return dateStr
+  const d = new Date(dateStr + 'T00:00:00')
+  while (true) {
+    d.setDate(d.getDate() + 1)
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const dd = String(d.getDate()).padStart(2, '0')
+    const s = `${y}-${m}-${dd}`
+    if (!isNonTradingDay(s)) return s
+  }
+}
+
 // ── 1. dailyNavpuCheck ────────────────────────────────────────────────────────
 
 exports.dailyNavpuCheck = onSchedule(
@@ -350,8 +416,9 @@ exports.dailyNavpuCheck = onSchedule(
       return
     }
 
-    // 1. Scrape latest NAVPU
-    const { navpu: scrapedNavpu, effectiveDate: scrapedDate, source, error: scrapeError } = await scrapeNavpu()
+    // 1. Scrape latest NAVPU — pass expectedDate so scraper skips stale sources
+    const expectedNavpuDate = lastBusinessDay(todayStr)
+    const { navpu: scrapedNavpu, effectiveDate: scrapedDate, source, error: scrapeError } = await scrapeNavpu(expectedNavpuDate)
 
     if (scrapeError || scrapedNavpu === null) {
       console.error('[dailyNavpuCheck] Scraping failed:', scrapeError)
@@ -367,7 +434,6 @@ exports.dailyNavpuCheck = onSchedule(
     const yesterday = offsetDate(todayStr, -1)
     const navpuDate = scrapedDate || yesterday
     // Stale = navpuDate is older than the last business day (T-1 is normal for mutual funds)
-    const expectedNavpuDate = lastBusinessDay(todayStr)
     const isStaleNavpu = navpuDate < expectedNavpuDate
     console.log(`[dailyNavpuCheck] Scraped NAVPU: ${scrapedNavpu} from ${source} (effective date: ${navpuDate}, expected: ${expectedNavpuDate})${isStaleNavpu ? ' ⚠️ STALE' : ' ✓'}`)
 
@@ -456,15 +522,19 @@ exports.dailyNavpuCheck = onSchedule(
         ? parseFloat((((scrapedNavpu - yearStartNavpu) / yearStartNavpu) * 100).toFixed(4))
         : null
 
-    // 8. Store NAVPU history under its actual effective date
-    await db.collection('navpu_history').doc(navpuDate).set({
-      date: navpuDate,
-      navpu: scrapedNavpu,
-      source,
-      roiYtd,
-      dailyChange: signal.dailyChange,
-      createdAt: FieldValue.serverTimestamp(),
-    })
+    // 8. Store NAVPU history under its actual effective date (skip if stale to avoid corrupting history)
+    if (!isStaleNavpu) {
+      await db.collection('navpu_history').doc(navpuDate).set({
+        date: navpuDate,
+        navpu: scrapedNavpu,
+        source,
+        roiYtd,
+        dailyChange: signal.dailyChange,
+        createdAt: FieldValue.serverTimestamp(),
+      })
+    } else {
+      console.warn(`[dailyNavpuCheck] Skipping navpu_history write — data is stale (got ${navpuDate}, expected ${expectedNavpuDate})`)
+    }
 
     // 9. Store signal
     await db.collection('signals').doc(todayStr).set({
@@ -491,14 +561,7 @@ exports.dailyNavpuCheck = onSchedule(
       })
     }
 
-    // 11. Scrape ALFM dividend declaration from BPI monthly announcement page
-    try {
-      await scrapeAndStoreAlfmDividend(db, todayStr)
-    } catch (divErr) {
-      console.error('[dailyNavpuCheck] scrapeAndStoreAlfmDividend error (non-fatal):', divErr.message)
-    }
-
-    // 12. Send email
+    // 11. Send email
     try {
       const user = gmailUser.value()
       const pass = gmailPass.value()
@@ -534,6 +597,7 @@ exports.recordBuy = onCall(
       staggerEventDate = null,
       isDividendBuy = false,
       bucket = null,
+      isPending = false,
       date: dateOverride = null,
     } = request.data
 
@@ -583,6 +647,7 @@ exports.recordBuy = onCall(
       staggerEventDate: staggerEventDate || null,
       isDividendBuy: isDividendBuy || false,
       bucket: bucket || null,
+      isPending: isPending || false,
       createdAt: FieldValue.serverTimestamp(),
     })
 
@@ -657,6 +722,68 @@ exports.correctBuyNavpu = onCall(
     }
 
     return { success: true, newUnitsBought, newAvgPrice }
+  }
+)
+
+// ── 3b. confirmPendingBuy ────────────────────────────────────────────────────
+// Generic for all 3 UITF funds. Confirms a pending buy with the actual NAVPU,
+// recalculates units and adjusts position by the delta.
+
+exports.confirmPendingBuy = onCall(
+  { region: 'us-central1', cors: true },
+  async (request) => {
+    const { buyId, actualNavpu, fund } = request.data
+    if (!buyId || !actualNavpu || actualNavpu <= 0) throw new Error('Invalid buyId or actualNavpu')
+    if (!['alfm', 'mgpiff', 'bpibond', 'mreit'].includes(fund)) throw new Error('Invalid fund')
+
+    const FUND_MAP = {
+      alfm:    { buys: 'buys',          position: 'position' },
+      mgpiff:  { buys: 'mgpiff_buys',   position: 'mgpiff_position' },
+      bpibond: { buys: 'bpibond_buys',  position: 'bpibond_position' },
+      mreit:   { buys: 'mreit_buys',    position: 'mreit_position' },
+    }
+    const { buys: buysCol, position: posCol } = FUND_MAP[fund]
+
+    const buyRef = db.collection(buysCol).doc(buyId)
+    const buySnap = await buyRef.get()
+    if (!buySnap.exists) throw new Error('Buy not found')
+    const buy = buySnap.data()
+    if (!buy.isPending) throw new Error('Buy is not pending')
+
+    const newUnitsBought = parseFloat((buy.amount / actualNavpu).toFixed(4))
+    const delta = newUnitsBought - buy.unitsBought
+    const newTotalUnitsAfter = parseFloat((buy.totalUnitsAfter + delta).toFixed(4))
+    const newAvgPrice = parseFloat((buy.totalCostAfter / newTotalUnitsAfter).toFixed(4))
+
+    await buyRef.update({
+      navpu: parseFloat(parseFloat(actualNavpu).toFixed(4)),
+      unitsBought: newUnitsBought,
+      totalUnitsAfter: newTotalUnitsAfter,
+      newAvgPrice,
+      isPending: false,
+      confirmedAt: FieldValue.serverTimestamp(),
+    })
+
+    const posSnap = await db.collection(posCol).doc('current').get()
+    if (posSnap.exists) {
+      const pos = posSnap.data()
+      const newPosUnits = parseFloat((pos.units + delta).toFixed(4))
+      const newPosAvgPrice = parseFloat((pos.totalCost / newPosUnits).toFixed(4))
+      const newMarketValue = parseFloat((newPosUnits * actualNavpu).toFixed(2))
+      const newUnrealizedGain = parseFloat((newMarketValue - pos.totalCost).toFixed(2))
+      const newUnrealizedGainPct = parseFloat(((newUnrealizedGain / pos.totalCost) * 100).toFixed(4))
+      await db.collection(posCol).doc('current').update({
+        units: newPosUnits,
+        avgPrice: newPosAvgPrice,
+        marketValue: newMarketValue,
+        unrealizedGain: newUnrealizedGain,
+        unrealizedGainPct: newUnrealizedGainPct,
+        updatedAt: FieldValue.serverTimestamp(),
+      })
+    }
+
+    console.log(`[confirmPendingBuy] ${fund} buy ${buyId}: NAVPU ${buy.navpu} → ${actualNavpu}, delta ${delta.toFixed(4)} units`)
+    return { success: true, newUnitsBought, newAvgPrice, delta }
   }
 )
 
@@ -861,74 +988,6 @@ exports.seedInitialData = onRequest(
   }
 )
 
-// ── 3a. restoreBtcPosition ────────────────────────────────────────────────────
-// One-time call to restore a manually logged BTC buy that the engine wiped.
-// DELETE this function after calling it.
-exports.restoreBtcPosition = onRequest({ region: 'us-central1' }, async (req, res) => {
-  const amountPhp      = 15384
-  const btcPriceUsd    = 80008
-  const phpPerUsd      = 62.59
-  const unitsBought    = parseFloat((amountPhp / (btcPriceUsd * phpPerUsd)).toFixed(8))
-  const stopLossUsd    = parseFloat((btcPriceUsd * 0.92).toFixed(2))
-  const tpUsd          = parseFloat((btcPriceUsd * 1.06).toFixed(2))
-  const entryTimestamp = '2026-05-13T00:00:00.000Z'
-
-  await db.collection('btc_position').doc('current').set({
-    state:               'BUILDING',
-    units:               unitsBought,
-    avgCost:             btcPriceUsd,
-    avgEntryPriceUsd:    btcPriceUsd,
-    totalCostPhp:        amountPhp,
-    totalDeployedPhp:    amountPhp,
-    currentBalancePhp:   0,
-    entryCount:          1,
-    entries:             [{ priceUsd: btcPriceUsd, amountPhp, timestamp: entryTimestamp }],
-    firstEntryTimestamp: entryTimestamp,
-    lastEntryTimestamp:  entryTimestamp,
-    stopLossUsd,
-    tpUsd,
-    hardExitTimestamp:   null,
-    exitSignal:          null,
-    exitSignalAt:        null,
-    updatedAt:           FieldValue.serverTimestamp(),
-  })
-
-  res.status(200).json({
-    message: 'BTC position restored',
-    units: unitsBought,
-    avgEntryPriceUsd: btcPriceUsd,
-    stopLossUsd,
-    tpUsd,
-    totalDeployedPhp: amountPhp,
-  })
-})
-
-// ── 3b. initBtcPosition ───────────────────────────────────────────────────────
-// One-time HTTP call to set the initial BTC swing trade position.
-// Call once after deploy: curl https://.../initBtcPosition
-exports.initBtcPosition = onRequest({ region: 'us-central1' }, async (req, res) => {
-  const existing = await db.collection('btc_position').doc('current').get()
-  if (existing.exists && existing.data().state) {
-    return res.status(200).json({ message: 'Already initialized', data: existing.data() })
-  }
-  await db.collection('btc_position').doc('current').set({
-    state: 'FLAT',
-    currentBalancePhp: 15000,
-    entryCount: 0,
-    entries: [],
-    avgEntryPriceUsd: null,
-    totalDeployedPhp: 0,
-    firstEntryTimestamp: null,
-    lastEntryTimestamp: null,
-    stopLossUsd: null,
-    tpUsd: null,
-    hardExitTimestamp: null,
-    macroMode: 'NORMAL',
-    killSwitchUntil: null,
-    updatedAt: FieldValue.serverTimestamp(),
-  })
-  return res.status(200).json({ message: 'BTC position initialized — FLAT, ₱15,000 balance, swing trade strategy.' })
-})
 
 // ── 4. seedHistoricalNavpu ────────────────────────────────────────────────────
 
@@ -1061,29 +1120,6 @@ exports.runBacktest = onRequest(
 
 // ── 8. recordBtcBuy ───────────────────────────────────────────────────────────
 
-/**
- * Record a BTC purchase and update the user's BTC position in Firestore.
- *
- * Called from BtcBuyModal when the user confirms a buy.
- *
- * Writes to:
- *   btc_buys/{auto-id}       — individual transaction record
- *   btc_position/current     — updated position (units, avgCost, totalCostPhp)
- *
- * Position calculations:
- *   newTotalUnits   = currentUnits + unitsBought
- *   newAvgCostUsd   = weighted average: (currentUnits * currentAvgCost + unitsBought * btcPriceUsd) / newTotalUnits
- *   newTotalCostPhp = currentTotalCostPhp + amountPhp
- *
- * @param {number}      data.amountPhp              PHP spent on this purchase
- * @param {number}      data.btcPriceUsd             BTC price in USD at purchase time
- * @param {number}      data.phpPerUsd               Exchange rate used (PHP per 1 USD)
- * @param {number}      data.unitsBought             BTC units received (from exchange or calculated)
- * @param {string|null} data.bucket                  Signal bucket ('opportunity', 'extreme_override', null)
- * @param {string|null} data.signalName              Signal tier at time of buy (e.g. 'BUY_MORE')
- * @param {string}      data.monthYear               'YYYY-MM' in PH timezone
- * @param {string|null} data.staggerEventTimestamp   ISO timestamp if this is part of a stagger event
- */
 exports.recordBtcBuy = onCall(
   { region: 'us-central1', cors: true },
   async (request) => {
@@ -1095,7 +1131,6 @@ exports.recordBtcBuy = onCall(
       bucket             = null,
       signalName         = null,
       monthYear,
-      staggerEventTimestamp = null,
     } = request.data
 
     if (!amountPhp || amountPhp <= 0)   throw new Error('amountPhp must be > 0')
@@ -1106,41 +1141,21 @@ exports.recordBtcBuy = onCall(
     const todayStr  = getTodayPH()
     const month     = monthYear || getMonthPH()
 
-    // Read current position (may not exist on first buy)
     const posSnap = await db.collection('btc_position').doc('current').get()
     const pos     = posSnap.exists ? posSnap.data() : {}
 
-    const currentUnits      = pos.units        ?? 0
-    const currentAvgCost    = pos.avgCost      ?? 0   // USD
-    const currentCostPhp    = pos.totalCostPhp ?? 0   // PHP
-    const existingEntries   = pos.entries      ?? []
-    const existingEntryCount = pos.entryCount  ?? 0
+    const currentUnits   = pos.units        ?? 0
+    const currentAvgCost = pos.avgCost      ?? 0
+    const currentCostPhp = pos.totalCostPhp ?? 0
 
-    // New position values
     const newTotalUnits   = currentUnits + unitsBought
     const newAvgCostUsd   = newTotalUnits > 0
       ? (currentUnits * currentAvgCost + unitsBought * btcPriceUsd) / newTotalUnits
       : btcPriceUsd
     const newTotalCostPhp = currentCostPhp + amountPhp
-
-    // Market value snapshot at time of buy
     const marketValuePhp  = newTotalUnits * btcPriceUsd * phpPerUsd
     const unrealizedPhp   = marketValuePhp - newTotalCostPhp
 
-    // Swing position tracking
-    const INITIAL_BALANCE   = 15000
-    const newEntryCount     = existingEntryCount + 1
-    const newEntries        = [...existingEntries, { priceUsd: btcPriceUsd, amountPhp, timestamp: nowIso }]
-    const newState          = newEntryCount >= 3 ? 'FULL' : 'BUILDING'
-    const firstEntryTs      = pos.firstEntryTimestamp || nowIso
-    const hardExitTs        = pos.hardExitTimestamp   || new Date(new Date(firstEntryTs).getTime() + 120 * 3600000).toISOString()
-    const currentBalancePhp = Math.max(0, INITIAL_BALANCE - newTotalCostPhp)
-
-    // Recalculate TP/SL based on new avg entry
-    const stopLossUsd = parseFloat((newAvgCostUsd * 0.92).toFixed(2))
-    const tpUsd       = parseFloat((newAvgCostUsd * 1.06).toFixed(2))
-
-    // Write buy record
     const buyRef = await db.collection('btc_buys').add({
       timestamp:            nowIso,
       date:                 todayStr,
@@ -1154,28 +1169,15 @@ exports.recordBtcBuy = onCall(
       totalCostPhpAfter:    parseFloat(newTotalCostPhp.toFixed(2)),
       bucket,
       signalName,
-      staggerEventTimestamp: staggerEventTimestamp || null,
       createdAt:            FieldValue.serverTimestamp(),
     })
 
-    // Update position — includes state + all fields the UI needs
     await db.collection('btc_position').doc('current').set({
-      state:                newState,
       units:                parseFloat(newTotalUnits.toFixed(8)),
       avgCost:              parseFloat(newAvgCostUsd.toFixed(2)),
-      avgEntryPriceUsd:     parseFloat(newAvgCostUsd.toFixed(2)),
       totalCostPhp:         parseFloat(newTotalCostPhp.toFixed(2)),
-      totalDeployedPhp:     parseFloat(newTotalCostPhp.toFixed(2)),
       marketValuePhp:       parseFloat(marketValuePhp.toFixed(2)),
       unrealizedPhp:        parseFloat(unrealizedPhp.toFixed(2)),
-      entries:              newEntries,
-      entryCount:           newEntryCount,
-      lastEntryPriceUsd:    parseFloat(btcPriceUsd.toFixed(2)),
-      firstEntryTimestamp:  firstEntryTs,
-      hardExitTimestamp:    hardExitTs,
-      currentBalancePhp:    parseFloat(currentBalancePhp.toFixed(2)),
-      stopLossUsd,
-      tpUsd,
       lastBuyDate:          todayStr,
       updatedAt:            FieldValue.serverTimestamp(),
     }, { merge: true })
@@ -1194,62 +1196,74 @@ exports.recordBtcBuy = onCall(
   }
 )
 
+exports.recordBtcSell = onCall(
+  { region: 'us-central1', cors: true },
+  async (request) => {
+    const { unitsSold, sellPriceUsd, phpPerUsd } = request.data
+
+    if (!unitsSold || unitsSold <= 0)       throw new Error('unitsSold must be > 0')
+    if (!sellPriceUsd || sellPriceUsd <= 0) throw new Error('sellPriceUsd must be > 0')
+    if (!phpPerUsd || phpPerUsd <= 0)       throw new Error('phpPerUsd must be > 0')
+
+    const posSnap = await db.collection('btc_position').doc('current').get()
+    if (!posSnap.exists) throw new Error('No BTC position found')
+    const pos = posSnap.data()
+
+    const currentUnits   = pos.units        ?? 0
+    const currentAvgCost = pos.avgCost      ?? 0
+    const currentCostPhp = pos.totalCostPhp ?? 0
+
+    if (unitsSold > currentUnits + 0.000000005) throw new Error(`Cannot sell more than you hold (${currentUnits})`)
+
+    const proceedsPhp    = unitsSold * sellPriceUsd * phpPerUsd
+    const costBasisPhp   = currentUnits > 0 ? (unitsSold / currentUnits) * currentCostPhp : 0
+    const realizedPnlPhp = proceedsPhp - costBasisPhp
+
+    const remainingUnits   = Math.max(0, currentUnits - unitsSold)
+    const remainingCostPhp = Math.max(0, currentCostPhp - costBasisPhp)
+
+    const nowIso   = new Date().toISOString()
+    const todayStr = getTodayPH()
+
+    const sellRef = await db.collection('btc_sells').add({
+      timestamp:       nowIso,
+      date:            todayStr,
+      unitsSold:       parseFloat(unitsSold.toFixed(8)),
+      sellPriceUsd:    parseFloat(sellPriceUsd.toFixed(2)),
+      phpPerUsd:       parseFloat(phpPerUsd.toFixed(4)),
+      proceedsPhp:     parseFloat(proceedsPhp.toFixed(2)),
+      costBasisPhp:    parseFloat(costBasisPhp.toFixed(2)),
+      realizedPnlPhp:  parseFloat(realizedPnlPhp.toFixed(2)),
+      avgCostUsd:      parseFloat(currentAvgCost.toFixed(2)),
+      unitsAfter:      parseFloat(remainingUnits.toFixed(8)),
+      createdAt:       FieldValue.serverTimestamp(),
+    })
+
+    const posUpdate = {
+      units:        parseFloat(remainingUnits.toFixed(8)),
+      totalCostPhp: parseFloat(remainingCostPhp.toFixed(2)),
+      updatedAt:    FieldValue.serverTimestamp(),
+    }
+    if (remainingUnits === 0) {
+      posUpdate.avgCost      = 0
+      posUpdate.marketValuePhp = 0
+      posUpdate.unrealizedPhp  = 0
+    }
+    await db.collection('btc_position').doc('current').set(posUpdate, { merge: true })
+
+    console.log(`[recordBtcSell] ₿${unitsSold.toFixed(8)} @ $${sellPriceUsd} → ₱${proceedsPhp.toFixed(0)} (P&L: ₱${realizedPnlPhp.toFixed(0)})`)
+
+    return {
+      success: true,
+      sellId:  sellRef.id,
+      realizedPnlPhp: parseFloat(realizedPnlPhp.toFixed(2)),
+      remainingUnits: parseFloat(remainingUnits.toFixed(8)),
+    }
+  }
+)
+
 // ── BTC helpers ───────────────────────────────────────────────────────────────
 
-/**
- * recordBtcSell — manually log a sell executed on PDAX.
- * Transitions position HOLDING → FLAT, writes trade to btc_trades.
- */
-exports.recordBtcSell = onCall({ region: 'us-central1', cors: true }, async (request) => {
-  const { exitPriceUsd } = request.data
-  if (!exitPriceUsd || exitPriceUsd <= 0) throw new Error('exitPriceUsd is required')
-
-  const posSnap = await db.collection('btc_position').doc('current').get()
-  if (!posSnap.exists) throw new Error('No position document found')
-
-  const pos = posSnap.data()
-  if (pos.state === 'FLAT') throw new Error('No open position to sell')
-
-  const { avgEntryPriceUsd, totalDeployedPhp, firstEntryTimestamp, currentBalancePhp, entries } = pos
-  const PDAX_FEE  = 0.005
-  const grossPct  = avgEntryPriceUsd ? (exitPriceUsd - avgEntryPriceUsd) / avgEntryPriceUsd : 0
-  const netPct    = grossPct - 2 * PDAX_FEE
-  const deployed  = totalDeployedPhp || currentBalancePhp || 0
-  const profitPhp = parseFloat((deployed * netPct).toFixed(2))
-  const newBalance = parseFloat((currentBalancePhp + profitPhp).toFixed(2))
-  const nowIso    = new Date().toISOString()
-  const holdHours = firstEntryTimestamp
-    ? parseFloat(((Date.now() - new Date(firstEntryTimestamp).getTime()) / 3600000).toFixed(1))
-    : null
-
-  const tradesSnap = await db.collection('btc_trades').get()
-  await db.collection('btc_trades').add({
-    tradeNumber:          tradesSnap.size + 1,
-    entries:              entries || [],
-    avgEntryPriceUsd,
-    exitPriceUsd,
-    totalDeployedPhp:     deployed,
-    estimatedProfitPhp:   profitPhp,
-    exitBalancePhp:       newBalance,
-    firstEntryTimestamp,
-    exitTimestamp:        nowIso,
-    holdHours,
-    exitType:             'MANUAL',
-    manualSell:           true,
-    createdAt:            FieldValue.serverTimestamp(),
-  })
-
-  await db.collection('btc_position').doc('current').set({
-    state: 'FLAT', currentBalancePhp: newBalance,
-    entryCount: 0, entries: [], avgEntryPriceUsd: null,
-    totalDeployedPhp: 0, firstEntryTimestamp: null, lastEntryTimestamp: null,
-    stopLossUsd: null, tpUsd: null, hardExitTimestamp: null,
-    exitSignal: null, exitSignalAt: null,
-    updatedAt: FieldValue.serverTimestamp(),
-  }, { merge: true })
-
-  return { profitPhp, newBalancePhp: newBalance, holdHours, netPct }
-})
 
 /**
  * Return the current UTC time as an ISO 8601 string.
@@ -1487,41 +1501,21 @@ exports.scheduledBtcBacktest = onSchedule(
 
 // ── 10. btcHourlySignalCheck ──────────────────────────────────────────────────
 
-/**
- * BTC hourly signal check — swing trade strategy.
- *
- * Strategy: buy short-term weakness (24h drop -3 to -8%, RSI<35, stabilization),
- * hold into mean reversion, exit ALL at +6% TP (~+5% net) or time/stop limit.
- *
- * Signals: SCAN | KILL_SWITCH | ENTRY_1 | ADD_ENTRY | HOLDING |
- *          TP_HIT | TIME_EXIT | STOP_LOSS
- *
- * Position structure (btc_position/current):
- *   state              FLAT | BUILDING | FULL
- *   currentBalancePhp  grows with each profitable cycle
- *   entryCount         0–3
- *   entries            [{ priceUsd, amountPhp, timestamp }]
- *   avgEntryPriceUsd   weighted avg of entries
- *   stopLossUsd        avgEntry × 0.92
- *   tpUsd              +6% from avg entry — sell ALL
- *   hardExitTimestamp  firstEntry + 120h
- *   killSwitchUntil    ISO — active when 7d drop ≤ -10%
- */
 exports.btcHourlySignalCheck = onSchedule(
   {
-    schedule:       '0 * * * *',    // every hour, on the hour
+    schedule:       '0 * * * *',
     timeZone:       'Asia/Manila',
     memory:         '256MiB',
     timeoutSeconds: 60,
     secrets:        [gmailUser, gmailPass],
   },
   async () => {
-    const nowIso   = getBtcNowIso()
+    const nowIso    = getBtcNowIso()
     const monthYear = getBtcMonthPH()
 
     console.log(`[btcHourlySignalCheck] Running at ${nowIso}`)
 
-    // ── 1. Fetch hourly candles (168h = 7d for min data, 720h for volume/RSI) ──
+    // ── 1. Fetch hourly candles ───────────────────────────────────────────────
     let candles
     try {
       candles = await fetchBtcCandles(720)
@@ -1531,168 +1525,85 @@ exports.btcHourlySignalCheck = onSchedule(
     }
     if (candles.length < 25) { console.error('[btcHourlySignalCheck] Too few candles'); return }
 
-    // ── 2. Fetch 200-day MA from daily candles ────────────────────────────────
-    let ma200 = null
-    try {
-      const dailyRes = await fetch(
-        'https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=200',
-        { signal: AbortSignal.timeout(12000) }
-      )
-      if (dailyRes.ok) {
-        const daily = await dailyRes.json()
-        const dailyCloses = daily.map((k) => parseFloat(k[4]))
-        if (dailyCloses.length >= 20) {
-          ma200 = parseFloat((dailyCloses.reduce((a, b) => a + b) / dailyCloses.length).toFixed(2))
-        }
-      }
-    } catch { /* non-fatal */ }
-    console.log(`[btcHourlySignalCheck] 200d MA: $${ma200 ?? 'unavailable'}`)
-
-    // ── 3. Derive price inputs ────────────────────────────────────────────────
+    // ── 2. Derive price inputs ────────────────────────────────────────────────
     const closes  = candles.map((c) => c.close)
     const volumes = candles.map((c) => c.volume)
     const n       = closes.length
 
     const currentPrice  = closes[n - 1]
     const prevHourPrice = closes[n - 2]
-    const currentOpen   = candles[n - 1].open
-    const price24hAgo   = n >= 25 ? closes[n - 25] : null
-    const price7dAgo    = n >= 169 ? closes[n - 169] : null
-    const low24h        = Math.min(...closes.slice(-24))
 
     const rsi         = calculateRSI(closes.slice(-30), 14)
-    const avgVol      = volumes.slice(0, -1).reduce((a, b) => a + b) / (volumes.length - 1) // exclude current open candle
+    const avgVol      = volumes.slice(0, -1).reduce((a, b) => a + b) / (volumes.length - 1)
     const volumeRatio = avgVol > 0 ? parseFloat((volumes[n - 2] / avgVol).toFixed(3)) : null
 
-    console.log(`[btcHourlySignalCheck] Price: $${currentPrice} | RSI: ${rsi ?? 'N/A'} | Vol: ${volumeRatio ?? 'N/A'}x | 24hAgo: $${price24hAgo ?? '?'}`)
+    const high90d = closes.length >= 2160
+      ? Math.max(...closes.slice(-2160))
+      : Math.max(...closes)
 
-    // ── 4. Read position state ────────────────────────────────────────────────
+    const fg = await fetchFearGreed()
+
+    console.log(`[btcHourlySignalCheck] Price: $${currentPrice} | RSI: ${rsi ?? 'N/A'} | Vol: ${volumeRatio ?? 'N/A'}x | F&G: ${fg?.value ?? 'N/A'}`)
+
+    // ── 3. Read position + monthly spend ──────────────────────────────────────
     const posSnap = await db.collection('btc_position').doc('current').get()
     const pos     = posSnap.exists ? posSnap.data() : {}
+    const avgCost = pos.avgCost ?? null
 
-    const positionState       = pos.state || 'FLAT'
-    const currentBalancePhp   = pos.currentBalancePhp || 15000
-    const entryCount          = pos.entryCount || 0
-    const entries             = pos.entries || []
-    const avgEntryPriceUsd    = pos.avgEntryPriceUsd || null
-    const lastEntryPriceUsd   = entries.length > 0 ? entries[entries.length - 1].priceUsd : null
-    const firstEntryTimestamp = pos.firstEntryTimestamp || null
-    const totalDeployedPhp    = pos.totalDeployedPhp || 0
-    const stopLossUsd         = pos.stopLossUsd || null
-    const tpUsd               = pos.tpUsd || null
-    const hardExitTimestamp   = pos.hardExitTimestamp || null
-    const killSwitchUntil     = pos.killSwitchUntil || null
+    const { totalSpent, lastTimestamp } = await sumBtcMonthlySpend(monthYear)
 
-    console.log(`[btcHourlySignalCheck] State: ${positionState} | Entries: ${entryCount}/3 | Balance: ₱${currentBalancePhp}`)
+    const oneDayAgo = new Date(Date.now() - 24 * 3600000).toISOString()
+    const extremeSnap = await db.collection('btc_buys')
+      .where('bucket', '==', 'extreme_override')
+      .where('timestamp', '>=', oneDayAgo)
+      .get()
+    const extremeOverrideCount24h = extremeSnap.size
 
-    // ── 5. Run swing signal engine ────────────────────────────────────────────
-    const signal = analyzeSwingSignal({
-      currentPrice, prevHourPrice, currentOpen,
-      price24hAgo, price7dAgo, low24h,
-      rsi, volumeRatio, ma200,
-      positionState, entryCount, entries,
-      avgEntryPriceUsd, lastEntryPriceUsd, firstEntryTimestamp,
-      currentBalancePhp, totalDeployedPhp,
-      stopLossUsd, tpUsd,
-      hardExitTimestamp, killSwitchUntil,
+    // ── 4. Run drawdown-based buy signal engine ──────────────────────────────
+    const phpPerUsd = 57.5
+
+    const signal = analyzeBtcSignal({
+      currentPrice,
+      prevHourPrice,
+      avgCost,
+      totalSpentThisMonth: totalSpent,
+      lastOpportunityBuyTimestamp: lastTimestamp,
       nowIso,
+      closes,
+      rsi,
+      fearGreedIndex: fg?.value ?? null,
+      volumeRatio,
+      high90d,
+      extremeOverrideCount24h,
     })
 
-    console.log(`[btcHourlySignalCheck] Signal: ${signal.signal} | Actionable: ${signal.isActionable}`)
+    console.log(`[btcHourlySignalCheck] Signal: ${signal.signal} | Drawdown: ${signal.drawdownPct?.toFixed(1)}% | Amount: ₱${signal.amount} | Actionable: ${signal.isActionable}`)
 
-    // ── 6. Update position state in Firestore ────────────────────────────────
-    if (signal.newKillSwitchUntil !== killSwitchUntil) {
-      await db.collection('btc_position').doc('current').update({
-        killSwitchUntil: signal.newKillSwitchUntil,
-        macroMode: signal.macroMode,
-        updatedAt: FieldValue.serverTimestamp(),
-      })
-    }
-
-    if (signal.signal === 'ENTRY_1') {
-      const newEntry = { priceUsd: currentPrice, amountPhp: signal.amount, timestamp: nowIso }
-      const levels   = swingExitLevels(currentPrice)
-      await db.collection('btc_position').doc('current').set({
-        state: 'BUILDING',
-        currentBalancePhp,
-        entryCount: 1,
-        entries: [newEntry],
-        avgEntryPriceUsd: currentPrice,
-        totalDeployedPhp: signal.amount,
-        firstEntryTimestamp: nowIso,
-        lastEntryTimestamp: nowIso,
-        ...levels,
-        hardExitTimestamp: signal.hardExitTimestamp,
-        macroMode: signal.macroMode,
-        killSwitchUntil: signal.newKillSwitchUntil,
-        updatedAt: FieldValue.serverTimestamp(),
-      }, { merge: false })
-      await db.collection('btc_buys').add({ priceUsd: currentPrice, amountPhp: signal.amount, entryNumber: 1, timestamp: nowIso, monthYear, createdAt: FieldValue.serverTimestamp() })
-      console.log(`[btcHourlySignalCheck] ENTRY_1 at $${currentPrice} — ₱${signal.amount}`)
-
-    } else if (signal.signal === 'ADD_ENTRY') {
-      const newEntry   = { priceUsd: currentPrice, amountPhp: signal.amount, timestamp: nowIso }
-      const allEntries = [...entries, newEntry]
-      const newCount   = allEntries.length
-      const newAvg     = parseFloat((allEntries.reduce((s, e) => s + e.priceUsd, 0) / newCount).toFixed(2))
-      const levels     = swingExitLevels(newAvg)
-      const newState   = newCount >= SWING.MAX_ENTRIES ? 'FULL' : 'BUILDING'
-      const totalPhp   = allEntries.reduce((s, e) => s + e.amountPhp, 0)
-      await db.collection('btc_position').doc('current').set({
-        state: newState,
-        entryCount: newCount,
-        entries: allEntries,
-        avgEntryPriceUsd: newAvg,
-        totalDeployedPhp: totalPhp,
-        lastEntryTimestamp: nowIso,
-        ...levels,
-        updatedAt: FieldValue.serverTimestamp(),
-      }, { merge: true })
-      await db.collection('btc_buys').add({ priceUsd: currentPrice, amountPhp: signal.amount, entryNumber: newCount, timestamp: nowIso, monthYear, createdAt: FieldValue.serverTimestamp() })
-      console.log(`[btcHourlySignalCheck] ADD_ENTRY ${newCount}/3 at $${currentPrice} — new avg $${newAvg}`)
-
-    } else if (['TP_HIT', 'TIME_EXIT', 'STOP_LOSS'].includes(signal.signal)) {
-      // Flag the exit signal — do NOT auto-close the position.
-      // The user must physically sell on PDAX first, then confirm via Log Sell.
-      // Only recordBtcSell resets state to FLAT and writes to btc_trades.
-      const alreadyFlagged = pos.exitSignal === signal.signal
-      if (!alreadyFlagged) {
-        await db.collection('btc_position').doc('current').update({
-          exitSignal: signal.signal,
-          exitSignalAt: nowIso,
-          updatedAt: FieldValue.serverTimestamp(),
-        })
-        console.log(`[btcHourlySignalCheck] ${signal.signal} flagged — waiting for manual sell confirmation`)
-      } else {
-        console.log(`[btcHourlySignalCheck] ${signal.signal} already flagged — skipping duplicate`)
-      }
-    }
-
-    // ── 7. Persist signal doc ─────────────────────────────────────────────────
+    // ── 5. Persist signal doc ─────────────────────────────────────────────────
     const signalDocId = nowIso.slice(0, 13)
     await db.collection('btc_signals').doc(signalDocId).set({
       ...signal,
+      phpPerUsd,
       monthYear,
       timestamp: nowIso,
       createdAt: FieldValue.serverTimestamp(),
     })
 
-    // ── 8. Send email ─────────────────────────────────────────────────────────
-    const manilaHour      = new Date(nowIso).toLocaleString('en-PH', { timeZone: 'Asia/Manila', hour: 'numeric', hour12: false })
-    const isDailyDigestHour = parseInt(manilaHour, 10) === 9
-    const shouldEmail     = signal.isActionable || isDailyDigestHour
+    // ── 6. Update position market value ───────────────────────────────────────
+    if (pos.units && pos.units > 0) {
+      await db.collection('btc_position').doc('current').update({
+        lastPriceUsd: currentPrice,
+        updatedAt: FieldValue.serverTimestamp(),
+      })
+    }
 
-    if (shouldEmail) {
+    // ── 7. Send email only on buy signals ─────────────────────────────────────
+    if (signal.isActionable) {
       try {
         const user = gmailUser.value()
         const pass = gmailPass.value()
         if (user && pass) {
-          const exitSignals = ['TP_HIT', 'TIME_EXIT', 'STOP_LOSS']
-          if (exitSignals.includes(signal.signal)) {
-            await sendBtcSellEmail(signal, nowIso, user, pass)
-          } else {
-            await sendBtcSignalEmail(signal, nowIso, user, pass)
-          }
+          await sendBtcSignalEmail(signal, nowIso, user, pass, phpPerUsd)
           console.log(`[btcHourlySignalCheck] Email sent (${signal.signal})`)
         }
       } catch (emailErr) {
@@ -1868,6 +1779,7 @@ exports.recordMgpiffBuy = onCall(
       unitsOverride = null,
       isDividendBuy = false,
       bucket = null,
+      isPending = false,
       staggerEventDate = null,
       date: dateOverride = null,
     } = request.data
@@ -1904,6 +1816,7 @@ exports.recordMgpiffBuy = onCall(
       staggerEventDate: staggerEventDate || null,
       isDividendBuy: isDividendBuy || false,
       bucket: bucket || null,
+      isPending: isPending || false,
       createdAt: FieldValue.serverTimestamp(),
     })
 
@@ -1919,6 +1832,201 @@ exports.recordMgpiffBuy = onCall(
 
     console.log(`[recordMgpiffBuy] ₱${amount} @ ₱${navpu} = ${unitsBought.toFixed(4)} units`)
     return { success: true, buyId: buyRef.id }
+  }
+)
+
+// ── 12b. recalcMgpiffPosition ────────────────────────────────────────────────
+// Rebuild mgpiff_position/current from all mgpiff_buys documents.
+// Call after manually deleting a duplicate buy from Firestore.
+
+exports.recalcMgpiffPosition = onRequest(
+  { region: 'us-central1', timeoutSeconds: 60 },
+  async (req, res) => {
+    const buysSnap = await db.collection('mgpiff_buys').orderBy('createdAt', 'asc').get()
+    if (buysSnap.empty) {
+      await db.collection('mgpiff_position').doc('current').set({
+        units: 0, avgPrice: 0, totalCost: 0,
+        marketValue: 0, unrealizedGain: 0, unrealizedGainPct: 0,
+        updatedAt: FieldValue.serverTimestamp(),
+      })
+      return res.status(200).json({ message: 'No buys found — position reset to zero.' })
+    }
+
+    let totalUnits = 0
+    let totalCost = 0
+
+    const batch = db.batch()
+    for (const doc of buysSnap.docs) {
+      const buy = doc.data()
+      const unitsBought = buy.unitsBought || (buy.amount / buy.navpu)
+      totalUnits += unitsBought
+      totalCost += buy.amount
+
+      const newAvgPrice = totalUnits > 0 ? totalCost / totalUnits : 0
+      batch.update(doc.ref, {
+        totalUnitsAfter: parseFloat(totalUnits.toFixed(4)),
+        totalCostAfter: parseFloat(totalCost.toFixed(2)),
+        newAvgPrice: parseFloat(newAvgPrice.toFixed(4)),
+      })
+    }
+    await batch.commit()
+
+    const latestNavpu = buysSnap.docs[buysSnap.docs.length - 1].data().navpu
+    const avgPrice = totalUnits > 0 ? totalCost / totalUnits : 0
+    const marketValue = totalUnits * latestNavpu
+    const unrealizedGain = marketValue - totalCost
+    const unrealizedGainPct = totalCost > 0 ? (unrealizedGain / totalCost) * 100 : 0
+
+    await db.collection('mgpiff_position').doc('current').set({
+      units: parseFloat(totalUnits.toFixed(4)),
+      avgPrice: parseFloat(avgPrice.toFixed(4)),
+      totalCost: parseFloat(totalCost.toFixed(2)),
+      marketValue: parseFloat(marketValue.toFixed(2)),
+      unrealizedGain: parseFloat(unrealizedGain.toFixed(2)),
+      unrealizedGainPct: parseFloat(unrealizedGainPct.toFixed(4)),
+      updatedAt: FieldValue.serverTimestamp(),
+    })
+
+    console.log(`[recalcMgpiffPosition] Rebuilt from ${buysSnap.size} buys: ${totalUnits.toFixed(4)} units, ₱${totalCost.toFixed(2)} cost`)
+    res.status(200).json({
+      message: 'Position recalculated',
+      buysCount: buysSnap.size,
+      units: parseFloat(totalUnits.toFixed(4)),
+      totalCost: parseFloat(totalCost.toFixed(2)),
+      avgPrice: parseFloat(avgPrice.toFixed(4)),
+    })
+  }
+)
+
+// ── 12c. recalcAlfmPosition ─────────────────────────────────────────────────
+
+exports.recalcAlfmPosition = onRequest(
+  { region: 'us-central1', timeoutSeconds: 60 },
+  async (req, res) => {
+    // Read seed position (pre-existing investment before app tracking)
+    const seedSnap = await db.collection('config').doc('seed_position').get()
+    const seed = seedSnap.exists ? seedSnap.data() : { units: 0, totalCost: 0 }
+
+    let totalUnits = seed.units || 0
+    let totalCost = seed.totalCost || 0
+
+    const buysSnap = await db.collection('buys').orderBy('createdAt', 'asc').get()
+    if (buysSnap.empty && totalUnits === 0) {
+      await db.collection('position').doc('current').set({
+        units: 0, avgPrice: 0, totalCost: 0,
+        marketValue: 0, unrealizedGain: 0, unrealizedGainPct: 0,
+        updatedAt: FieldValue.serverTimestamp(),
+      })
+      return res.status(200).json({ message: 'No buys or seed found — position reset to zero.' })
+    }
+
+    if (!buysSnap.empty) {
+      const batch = db.batch()
+      for (const doc of buysSnap.docs) {
+        const buy = doc.data()
+        const unitsBought = buy.unitsBought || (buy.amount / buy.navpu)
+        totalUnits += unitsBought
+        totalCost += buy.amount
+
+        const newAvgPrice = totalUnits > 0 ? totalCost / totalUnits : 0
+        batch.update(doc.ref, {
+          totalUnitsAfter: parseFloat(totalUnits.toFixed(4)),
+          totalCostAfter: parseFloat(totalCost.toFixed(2)),
+          newAvgPrice: parseFloat(newAvgPrice.toFixed(4)),
+        })
+      }
+      await batch.commit()
+    }
+
+    const latestNavpu = !buysSnap.empty
+      ? buysSnap.docs[buysSnap.docs.length - 1].data().navpu
+      : (seed.avgPrice || 0)
+    const avgPrice = totalUnits > 0 ? totalCost / totalUnits : 0
+    const marketValue = totalUnits * latestNavpu
+    const unrealizedGain = marketValue - totalCost
+    const unrealizedGainPct = totalCost > 0 ? (unrealizedGain / totalCost) * 100 : 0
+
+    await db.collection('position').doc('current').set({
+      units: parseFloat(totalUnits.toFixed(4)),
+      avgPrice: parseFloat(avgPrice.toFixed(4)),
+      totalCost: parseFloat(totalCost.toFixed(2)),
+      marketValue: parseFloat(marketValue.toFixed(2)),
+      unrealizedGain: parseFloat(unrealizedGain.toFixed(2)),
+      unrealizedGainPct: parseFloat(unrealizedGainPct.toFixed(4)),
+      updatedAt: FieldValue.serverTimestamp(),
+    })
+
+    console.log(`[recalcAlfmPosition] Rebuilt from seed (${seed.units || 0} units) + ${buysSnap.size} buys: ${totalUnits.toFixed(4)} units, ₱${totalCost.toFixed(2)} cost`)
+    res.status(200).json({
+      message: 'Position recalculated',
+      seedUnits: seed.units || 0,
+      seedCost: seed.totalCost || 0,
+      buysCount: buysSnap.size,
+      units: parseFloat(totalUnits.toFixed(4)),
+      totalCost: parseFloat(totalCost.toFixed(2)),
+      avgPrice: parseFloat(avgPrice.toFixed(4)),
+    })
+  }
+)
+
+// ── 12d. recalcBpibondPosition ──────────────────────────────────────────────
+
+exports.recalcBpibondPosition = onRequest(
+  { region: 'us-central1', timeoutSeconds: 60 },
+  async (req, res) => {
+    const buysSnap = await db.collection('bpibond_buys').orderBy('createdAt', 'asc').get()
+    if (buysSnap.empty) {
+      await db.collection('bpibond_position').doc('current').set({
+        units: 0, avgPrice: 0, totalCost: 0,
+        marketValue: 0, unrealizedGain: 0, unrealizedGainPct: 0,
+        updatedAt: FieldValue.serverTimestamp(),
+      })
+      return res.status(200).json({ message: 'No buys found — position reset to zero.' })
+    }
+
+    let totalUnits = 0
+    let totalCost = 0
+
+    const batch = db.batch()
+    for (const doc of buysSnap.docs) {
+      const buy = doc.data()
+      const unitsBought = buy.unitsBought || (buy.amount / buy.navpu)
+      totalUnits += unitsBought
+      totalCost += buy.amount
+
+      const newAvgPrice = totalUnits > 0 ? totalCost / totalUnits : 0
+      batch.update(doc.ref, {
+        totalUnitsAfter: parseFloat(totalUnits.toFixed(4)),
+        totalCostAfter: parseFloat(totalCost.toFixed(2)),
+        newAvgPrice: parseFloat(newAvgPrice.toFixed(4)),
+      })
+    }
+    await batch.commit()
+
+    const latestNavpu = buysSnap.docs[buysSnap.docs.length - 1].data().navpu
+    const avgPrice = totalUnits > 0 ? totalCost / totalUnits : 0
+    const marketValue = totalUnits * latestNavpu
+    const unrealizedGain = marketValue - totalCost
+    const unrealizedGainPct = totalCost > 0 ? (unrealizedGain / totalCost) * 100 : 0
+
+    await db.collection('bpibond_position').doc('current').set({
+      units: parseFloat(totalUnits.toFixed(4)),
+      avgPrice: parseFloat(avgPrice.toFixed(4)),
+      totalCost: parseFloat(totalCost.toFixed(2)),
+      marketValue: parseFloat(marketValue.toFixed(2)),
+      unrealizedGain: parseFloat(unrealizedGain.toFixed(2)),
+      unrealizedGainPct: parseFloat(unrealizedGainPct.toFixed(4)),
+      updatedAt: FieldValue.serverTimestamp(),
+    })
+
+    console.log(`[recalcBpibondPosition] Rebuilt from ${buysSnap.size} buys: ${totalUnits.toFixed(4)} units, ₱${totalCost.toFixed(2)} cost`)
+    res.status(200).json({
+      message: 'Position recalculated',
+      buysCount: buysSnap.size,
+      units: parseFloat(totalUnits.toFixed(4)),
+      totalCost: parseFloat(totalCost.toFixed(2)),
+      avgPrice: parseFloat(avgPrice.toFixed(4)),
+    })
   }
 )
 
@@ -2093,6 +2201,776 @@ exports.scheduledMgpiffBacktest = onSchedule(
       console.log('[scheduledMgpiffBacktest] Done.', summary.totalDays, 'days processed')
     } catch (err) {
       console.error('[scheduledMgpiffBacktest] Error:', err)
+    }
+  }
+)
+
+// ── 17. dailyBpibondCheck ────────────────────────────────────────────────────
+
+exports.dailyBpibondCheck = onSchedule(
+  {
+    schedule: '0 16 * * *',
+    timeZone: 'Asia/Manila',
+    memory: '256MiB',
+    timeoutSeconds: 60,
+    secrets: [gmailUser, gmailPass],
+  },
+  async () => {
+    const todayStr = getTodayPH()
+    const monthYear = getMonthPH()
+
+    console.log(`[dailyBpibondCheck] Running for ${todayStr}`)
+
+    if (isNonTradingDay(todayStr)) {
+      const reason = isWeekend(todayStr) ? 'weekend' : 'PH public holiday'
+      console.log(`[dailyBpibondCheck] Skipping — ${reason}`)
+      return
+    }
+
+    const yesterday = offsetDate(todayStr, -1)
+    const { navpu: scrapedNavpu, effectiveDate: scrapedDate, source, error: scrapeError } = await scrapeBpibondNavpu(yesterday)
+
+    if (scrapeError || scrapedNavpu === null) {
+      console.error('[dailyBpibondCheck] Scraping failed:', scrapeError)
+      await db.collection('bpibond_scrape_errors').doc(todayStr).set({
+        date: todayStr, scrapeError: scrapeError || 'Unknown', createdAt: FieldValue.serverTimestamp(),
+      })
+      return
+    }
+
+    const navpuDate = scrapedDate || yesterday
+    console.log(`[dailyBpibondCheck] Scraped NAVPU: ${scrapedNavpu} from ${source} (date: ${navpuDate})`)
+
+    const recentDocs = await db.collection('bpibond_navpu_history')
+      .where('date', '<', todayStr)
+      .orderBy('date', 'desc')
+      .limit(14)
+      .get()
+    const recentNavpus = recentDocs.docs
+      .map((d) => d.data())
+      .filter((d) => !isWeekend(d.date))
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map((d) => d.navpu)
+      .filter((n) => n !== null)
+
+    const yesterdayNavpu = recentNavpus.length > 0 ? recentNavpus[recentNavpus.length - 1] : null
+    const twoDaysAgoNavpu = recentNavpus.length > 1 ? recentNavpus[recentNavpus.length - 2] : null
+    const last7Navpus = [...recentNavpus.slice(-6), scrapedNavpu]
+
+    const positionSnap = await db.collection('bpibond_position').doc('current').get()
+    const position = positionSnap.exists ? positionSnap.data() : {}
+    const avgPrice = position.avgPrice && position.avgPrice > 0 ? position.avgPrice : null
+
+    const buysSnap = await db.collection('bpibond_buys').where('monthYear', '==', monthYear).get()
+    const monthBuys = buysSnap.docs.map((d) => d.data())
+    const dividendBuyDoneThisMonth = monthBuys.some((b) => b.isDividendBuy === true)
+    const rspBuyDoneThisMonth = monthBuys.some((b) => b.isRspBuy === true)
+    const oppBuys = monthBuys.filter((b) => !b.isDividendBuy && !b.isRspBuy && b.bucket !== 'extreme_override')
+    const staggerSeen = new Set()
+    let opportunityBuyCountThisMonth = 0
+    for (const buy of oppBuys) {
+      if (buy.staggerEventDate) {
+        if (!staggerSeen.has(buy.staggerEventDate)) { staggerSeen.add(buy.staggerEventDate); opportunityBuyCountThisMonth++ }
+      } else {
+        opportunityBuyCountThisMonth++
+      }
+    }
+    const oppDates = oppBuys.map((b) => b.date).sort()
+    const lastOpportunityBuyDate = oppDates.length > 0 ? oppDates[oppDates.length - 1] : null
+
+    const recordDates = getBpibondRecordDates(todayStr)
+
+    // RSP day check (18th of each month, starting Oct 2026)
+    const phNow = new Date(todayStr + 'T00:00:00')
+    const rspDay = getBpibondRspDay(phNow.getFullYear(), phNow.getMonth())
+    const isRspDay = rspDay === todayStr
+
+    const allNavpuSnap = await db.collection('bpibond_navpu_history').orderBy('date', 'asc').get()
+    const allNavpuValues = allNavpuSnap.docs
+      .filter((d) => !isWeekend(d.data().date))
+      .map((d) => d.data().navpu)
+      .filter((v) => v != null && !isNaN(v))
+    const thresholds = computeBpibondThresholds(allNavpuValues)
+
+    await db.collection('bpibond_config').doc('thresholds').set(thresholds)
+
+    const signal = analyzeBpibondSignal({
+      todayNavpu: scrapedNavpu,
+      yesterdayNavpu,
+      twoDaysAgoNavpu,
+      last7Navpus,
+      avgPrice,
+      dividendBuyDoneThisMonth,
+      opportunityBuyCountThisMonth,
+      lastOpportunityBuyDate,
+      todayStr,
+      recordDates,
+      thresholds,
+    })
+
+    console.log(`[dailyBpibondCheck] Signal: ${signal.signal} amount=${signal.amount} | RSP day: ${isRspDay} done: ${rspBuyDoneThisMonth}`)
+
+    await db.collection('bpibond_navpu_history').doc(navpuDate).set({
+      date: navpuDate,
+      navpu: scrapedNavpu,
+      source,
+      dailyChange: signal.dailyChange,
+      createdAt: FieldValue.serverTimestamp(),
+    })
+
+    await db.collection('bpibond_signals').doc(todayStr).set({
+      ...signal,
+      navpu: scrapedNavpu,
+      monthYear,
+      isRspDay,
+      rspBuyDone: rspBuyDoneThisMonth,
+      rspDay: rspDay || null,
+      createdAt: FieldValue.serverTimestamp(),
+    })
+
+    if (position.units && position.units > 0) {
+      const marketValue = position.units * scrapedNavpu
+      const unrealizedGain = marketValue - (position.totalCost || 0)
+      const unrealizedGainPct = position.totalCost > 0
+        ? parseFloat(((unrealizedGain / position.totalCost) * 100).toFixed(4)) : 0
+      await db.collection('bpibond_position').doc('current').update({
+        marketValue: parseFloat(marketValue.toFixed(2)),
+        unrealizedGain: parseFloat(unrealizedGain.toFixed(2)),
+        unrealizedGainPct,
+        updatedAt: FieldValue.serverTimestamp(),
+      })
+    }
+
+    try {
+      const user = gmailUser.value()
+      const pass = gmailPass.value()
+      if (user && pass) {
+        await sendBpibondSignalEmail(signal, todayStr, user, pass, { isRspDay, rspBuyDone: rspBuyDoneThisMonth })
+        console.log('[dailyBpibondCheck] Email sent.')
+      }
+    } catch (emailErr) {
+      console.error('[dailyBpibondCheck] Email error (non-fatal):', emailErr.message)
+    }
+
+    console.log('[dailyBpibondCheck] Done.')
+  }
+)
+
+// ── 18. recordBpibondBuy ─────────────────────────────────────────────────────
+
+exports.recordBpibondBuy = onCall(
+  { region: 'us-central1', cors: true },
+  async (request) => {
+    const {
+      amount,
+      navpu,
+      unitsOverride = null,
+      isDividendBuy = false,
+      isRspBuy = false,
+      bucket = null,
+      isPending = false,
+      staggerEventDate = null,
+      date: dateOverride = null,
+    } = request.data
+
+    if (!amount || !navpu || amount <= 0 || navpu <= 0) throw new Error('Invalid amount or navpu')
+
+    const todayStr = dateOverride || getTodayPH()
+    const monthYear = todayStr.substring(0, 7)
+
+    const positionSnap = await db.collection('bpibond_position').doc('current').get()
+    const position = positionSnap.exists
+      ? positionSnap.data()
+      : { units: 0, avgPrice: 0, totalCost: 0 }
+
+    const currentUnits = position.units || 0
+    const currentCost = position.totalCost || 0
+    const unitsBought = unitsOverride != null ? unitsOverride : amount / navpu
+    const newTotalUnits = currentUnits + unitsBought
+    const newTotalCost = currentCost + amount
+    const newAvgPrice = newTotalUnits > 0 ? newTotalCost / newTotalUnits : 0
+    const newMarketValue = newTotalUnits * navpu
+    const newUnrealizedGain = newMarketValue - newTotalCost
+    const newUnrealizedGainPct = newTotalCost > 0 ? (newUnrealizedGain / newTotalCost) * 100 : 0
+
+    const buyRef = await db.collection('bpibond_buys').add({
+      date: todayStr,
+      amount: parseFloat(amount.toFixed(2)),
+      navpu: parseFloat(parseFloat(navpu).toFixed(4)),
+      unitsBought: parseFloat(unitsBought.toFixed(4)),
+      newAvgPrice: parseFloat(newAvgPrice.toFixed(4)),
+      totalUnitsAfter: parseFloat(newTotalUnits.toFixed(4)),
+      totalCostAfter: parseFloat(newTotalCost.toFixed(2)),
+      monthYear,
+      staggerEventDate: staggerEventDate || null,
+      isDividendBuy: isDividendBuy || false,
+      isRspBuy: isRspBuy || false,
+      bucket: bucket || null,
+      isPending: isPending || false,
+      createdAt: FieldValue.serverTimestamp(),
+    })
+
+    await db.collection('bpibond_position').doc('current').set({
+      units: parseFloat(newTotalUnits.toFixed(4)),
+      avgPrice: parseFloat(newAvgPrice.toFixed(4)),
+      totalCost: parseFloat(newTotalCost.toFixed(2)),
+      marketValue: parseFloat(newMarketValue.toFixed(2)),
+      unrealizedGain: parseFloat(newUnrealizedGain.toFixed(2)),
+      unrealizedGainPct: parseFloat(newUnrealizedGainPct.toFixed(4)),
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true })
+
+    console.log(`[recordBpibondBuy] ₱${amount} @ ₱${navpu} = ${unitsBought.toFixed(4)} units`)
+    return { success: true, buyId: buyRef.id }
+  }
+)
+
+// ── 19. seedBpibondData ──────────────────────────────────────────────────────
+
+exports.seedBpibondData = onRequest(
+  { region: 'us-central1', timeoutSeconds: 120, memory: '256MiB' },
+  async (req, res) => {
+    if (req.method !== 'POST' && req.method !== 'GET') { res.status(405).send('Method not allowed'); return }
+
+    console.log('[seedBpibondData] Starting...')
+    const results = { positionSeeded: false, dividendsSeeded: 0, skipped: 0 }
+
+    const posSnap = await db.collection('bpibond_position').doc('current').get()
+    if (!posSnap.exists) {
+      await db.collection('bpibond_position').doc('current').set({
+        units: 0, avgPrice: 0, totalCost: 0,
+        marketValue: 0, unrealizedGain: 0, unrealizedGainPct: 0,
+        updatedAt: FieldValue.serverTimestamp(),
+      })
+      results.positionSeeded = true
+    }
+
+    console.log('[seedBpibondData] Done.', results)
+    res.status(200).json({ message: 'BPI Bond seed complete', ...results })
+  }
+)
+
+// ── 20. seedBpibondNavpu ─────────────────────────────────────────────────────
+
+exports.seedBpibondNavpu = onRequest(
+  { region: 'us-central1', timeoutSeconds: 540, memory: '512MiB' },
+  async (req, res) => {
+    if (req.method !== 'GET' && req.method !== 'POST') { res.status(405).send('GET or POST only'); return }
+
+    const fromDate = req.query.from || '2020-01-01'
+    const toDate   = req.query.to   || getTodayPH()
+
+    console.log(`[seedBpibondNavpu] Fetching ${fromDate} → ${toDate}`)
+
+    let rawPoints
+    try {
+      rawPoints = await fetchBpibondNavpuRange(fromDate, toDate)
+    } catch (err) {
+      res.status(500).json({ error: `uitf.com.ph fetch failed: ${err.message}` })
+      return
+    }
+
+    if (!rawPoints.length) {
+      res.status(200).json({ message: 'No data returned from uitf.com.ph', written: 0, skipped: 0 })
+      return
+    }
+
+    const parsed = rawPoints
+      .map((p) => ({ date: bpibondLabelToDate(p.label), navpu: parseFloat(p.y) }))
+      .filter((p) => p.date && !isNaN(p.navpu) && p.navpu >= 80 && p.navpu <= 150)
+      .sort((a, b) => a.date.localeCompare(b.date))
+
+    let written = 0, skipped = 0
+    const BATCH_SIZE = 400
+
+    for (let i = 0; i < parsed.length; i += BATCH_SIZE) {
+      const batch = db.batch()
+      const chunk = parsed.slice(i, i + BATCH_SIZE)
+      for (let j = 0; j < chunk.length; j++) {
+        const { date, navpu } = chunk[j]
+        const ref = db.collection('bpibond_navpu_history').doc(date)
+        const existing = await ref.get()
+        if (existing.exists) { skipped++; continue }
+        const prevNavpu = j > 0 ? chunk[j - 1].navpu : (i > 0 ? parsed[i - 1].navpu : null)
+        const dailyChange = prevNavpu !== null ? parseFloat((navpu - prevNavpu).toFixed(4)) : 0
+        batch.set(ref, {
+          date, navpu, dailyChange,
+          source: 'uitf.com.ph',
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        })
+        written++
+      }
+      await batch.commit()
+      console.log(`[seedBpibondNavpu] Progress: ${i + chunk.length}/${parsed.length}`)
+    }
+
+    console.log(`[seedBpibondNavpu] Done — written=${written} skipped=${skipped}`)
+    res.status(200).json({ message: 'BPI Bond NAVPU seed complete', written, skipped, total: parsed.length, range: `${fromDate} → ${toDate}` })
+  }
+)
+
+// ── 21. runBpibondBacktest (HTTP, manual trigger) ────────────────────────────
+
+exports.runBpibondBacktest = onRequest(
+  { region: 'us-central1', timeoutSeconds: 540, memory: '512MiB' },
+  async (req, res) => {
+    if (req.method !== 'POST' && req.method !== 'GET') { res.status(405).send('Method not allowed'); return }
+    console.log('[runBpibondBacktest] Starting...')
+    try {
+      const { results, summary } = await runBpibondBacktest(db)
+      await db.collection('bpibond_config').doc('backtest_summary').set(summary)
+      const batchSize = 400
+      for (let i = 0; i < results.length; i += batchSize) {
+        const batch = db.batch()
+        for (const r of results.slice(i, i + batchSize)) {
+          batch.set(db.collection('bpibond_backtest_results').doc(r.date), r)
+        }
+        await batch.commit()
+      }
+      console.log('[runBpibondBacktest] Done.', summary)
+      res.status(200).json({ message: 'BPI Bond backtest complete', summary })
+    } catch (err) {
+      console.error('[runBpibondBacktest] Error:', err)
+      res.status(500).json({ error: err.message })
+    }
+  }
+)
+
+// ── 22. scheduledBpibondBacktest ─────────────────────────────────────────────
+
+exports.scheduledBpibondBacktest = onSchedule(
+  {
+    schedule: '0 11 1,15 * *',
+    timeZone: 'Asia/Manila',
+    timeoutSeconds: 540,
+    memory: '512MiB',
+  },
+  async () => {
+    console.log('[scheduledBpibondBacktest] Starting...')
+    try {
+      const { results, summary } = await runBpibondBacktest(db)
+      await db.collection('bpibond_config').doc('backtest_summary').set(summary)
+      const batchSize = 400
+      for (let i = 0; i < results.length; i += batchSize) {
+        const batch = db.batch()
+        for (const r of results.slice(i, i + batchSize)) {
+          batch.set(db.collection('bpibond_backtest_results').doc(r.date), r)
+        }
+        await batch.commit()
+      }
+      console.log('[scheduledBpibondBacktest] Done.', summary.totalDays, 'days processed')
+    } catch (err) {
+      console.error('[scheduledBpibondBacktest] Error:', err)
+    }
+  }
+)
+
+// ── 23. dailyMreitCheck ─────────────────────────────────────────────────────
+
+exports.dailyMreitCheck = onSchedule(
+  {
+    schedule: '0 16 * * *',
+    timeZone: 'Asia/Manila',
+    memory: '256MiB',
+    timeoutSeconds: 60,
+    secrets: [gmailUser, gmailPass],
+  },
+  async () => {
+    const todayStr = getTodayPH()
+    const monthYear = getMonthPH()
+
+    console.log(`[dailyMreitCheck] Running for ${todayStr}`)
+
+    if (isNonTradingDay(todayStr)) {
+      const reason = isWeekend(todayStr) ? 'weekend' : 'PH public holiday'
+      console.log(`[dailyMreitCheck] Skipping — ${reason}`)
+      return
+    }
+
+    const yesterday = offsetDate(todayStr, -1)
+    const { navpu: scrapedNavpu, effectiveDate: scrapedDate, source, error: scrapeError } = await scrapeMreitNavpu(yesterday)
+
+    if (scrapeError || scrapedNavpu === null) {
+      console.error('[dailyMreitCheck] Scraping failed:', scrapeError)
+      await db.collection('mreit_scrape_errors').doc(todayStr).set({
+        date: todayStr, scrapeError: scrapeError || 'Unknown', createdAt: FieldValue.serverTimestamp(),
+      })
+      return
+    }
+
+    const navpuDate = scrapedDate || yesterday
+    console.log(`[dailyMreitCheck] Scraped NAVPU: ${scrapedNavpu} from ${source} (date: ${navpuDate})`)
+
+    const recentDocs = await db.collection('mreit_navpu_history')
+      .where('date', '<', todayStr)
+      .orderBy('date', 'desc')
+      .limit(14)
+      .get()
+    const recentNavpus = recentDocs.docs
+      .map((d) => d.data())
+      .filter((d) => !isWeekend(d.date))
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map((d) => d.navpu)
+      .filter((n) => n !== null)
+
+    const yesterdayNavpu = recentNavpus.length > 0 ? recentNavpus[recentNavpus.length - 1] : null
+    const twoDaysAgoNavpu = recentNavpus.length > 1 ? recentNavpus[recentNavpus.length - 2] : null
+    const last7Navpus = [...recentNavpus.slice(-6), scrapedNavpu]
+
+    const positionSnap = await db.collection('mreit_position').doc('current').get()
+    const position = positionSnap.exists ? positionSnap.data() : {}
+    const avgPrice = position.avgPrice && position.avgPrice > 0 ? position.avgPrice : null
+
+    const buysSnap = await db.collection('mreit_buys').where('monthYear', '==', monthYear).get()
+    const monthBuys = buysSnap.docs.map((d) => d.data())
+    const dividendBuyDoneThisMonth = monthBuys.some((b) => b.isDividendBuy === true)
+    const oppBuys = monthBuys.filter((b) => !b.isDividendBuy && b.bucket !== 'extreme_override')
+    const staggerSeen = new Set()
+    let opportunityBuyCountThisMonth = 0
+    for (const buy of oppBuys) {
+      if (buy.staggerEventDate) {
+        if (!staggerSeen.has(buy.staggerEventDate)) { staggerSeen.add(buy.staggerEventDate); opportunityBuyCountThisMonth++ }
+      } else {
+        opportunityBuyCountThisMonth++
+      }
+    }
+    const oppDates = oppBuys.map((b) => b.date).sort()
+    const lastOpportunityBuyDate = oppDates.length > 0 ? oppDates[oppDates.length - 1] : null
+
+    const recordDates = getMreitDistributionDates(todayStr)
+
+    const allNavpuSnap = await db.collection('mreit_navpu_history').orderBy('date', 'asc').get()
+    const allNavpuValues = allNavpuSnap.docs
+      .filter((d) => !isWeekend(d.data().date))
+      .map((d) => d.data().navpu)
+      .filter((v) => v != null && !isNaN(v))
+    const thresholds = computeMreitThresholds(allNavpuValues)
+
+    await db.collection('mreit_config').doc('thresholds').set(thresholds)
+
+    const signal = analyzeMreitSignal({
+      todayNavpu: scrapedNavpu,
+      yesterdayNavpu,
+      twoDaysAgoNavpu,
+      last7Navpus,
+      avgPrice,
+      dividendBuyDoneThisMonth,
+      opportunityBuyCountThisMonth,
+      lastOpportunityBuyDate,
+      todayStr,
+      recordDates,
+      thresholds,
+    })
+
+    console.log(`[dailyMreitCheck] Signal: ${signal.signal} amount=${signal.amount}`)
+
+    await db.collection('mreit_navpu_history').doc(navpuDate).set({
+      date: navpuDate,
+      navpu: scrapedNavpu,
+      source,
+      dailyChange: signal.dailyChange,
+      createdAt: FieldValue.serverTimestamp(),
+    })
+
+    await db.collection('mreit_signals').doc(todayStr).set({
+      ...signal,
+      navpu: scrapedNavpu,
+      monthYear,
+      createdAt: FieldValue.serverTimestamp(),
+    })
+
+    if (position.units && position.units > 0) {
+      const marketValue = position.units * scrapedNavpu
+      const unrealizedGain = marketValue - (position.totalCost || 0)
+      const unrealizedGainPct = position.totalCost > 0
+        ? parseFloat(((unrealizedGain / position.totalCost) * 100).toFixed(4)) : 0
+      await db.collection('mreit_position').doc('current').update({
+        marketValue: parseFloat(marketValue.toFixed(2)),
+        unrealizedGain: parseFloat(unrealizedGain.toFixed(2)),
+        unrealizedGainPct,
+        updatedAt: FieldValue.serverTimestamp(),
+      })
+    }
+
+    try {
+      const user = gmailUser.value()
+      const pass = gmailPass.value()
+      if (user && pass) {
+        await sendMreitSignalEmail(signal, todayStr, user, pass)
+        console.log('[dailyMreitCheck] Email sent.')
+      }
+    } catch (emailErr) {
+      console.error('[dailyMreitCheck] Email error (non-fatal):', emailErr.message)
+    }
+
+    console.log('[dailyMreitCheck] Done.')
+  }
+)
+
+// ── 24. recordMreitBuy ──────────────────────────────────────────────────────
+
+exports.recordMreitBuy = onCall(
+  { region: 'us-central1', cors: true },
+  async (request) => {
+    const {
+      amount,
+      navpu,
+      unitsOverride = null,
+      isDividendBuy = false,
+      bucket = null,
+      isPending = false,
+      staggerEventDate = null,
+      date: dateOverride = null,
+    } = request.data
+
+    if (!amount || !navpu || amount <= 0 || navpu <= 0) throw new Error('Invalid amount or navpu')
+
+    const todayStr = dateOverride || getTodayPH()
+    const monthYear = todayStr.substring(0, 7)
+
+    const positionSnap = await db.collection('mreit_position').doc('current').get()
+    const position = positionSnap.exists
+      ? positionSnap.data()
+      : { units: 0, avgPrice: 0, totalCost: 0 }
+
+    const currentUnits = position.units || 0
+    const currentCost = position.totalCost || 0
+    const unitsBought = unitsOverride != null ? unitsOverride : amount / navpu
+    const newTotalUnits = currentUnits + unitsBought
+    const newTotalCost = currentCost + amount
+    const newAvgPrice = newTotalUnits > 0 ? newTotalCost / newTotalUnits : 0
+    const newMarketValue = newTotalUnits * navpu
+    const newUnrealizedGain = newMarketValue - newTotalCost
+    const newUnrealizedGainPct = newTotalCost > 0 ? (newUnrealizedGain / newTotalCost) * 100 : 0
+
+    const buyRef = await db.collection('mreit_buys').add({
+      date: todayStr,
+      amount: parseFloat(amount.toFixed(2)),
+      navpu: parseFloat(parseFloat(navpu).toFixed(4)),
+      unitsBought: parseFloat(unitsBought.toFixed(4)),
+      newAvgPrice: parseFloat(newAvgPrice.toFixed(4)),
+      totalUnitsAfter: parseFloat(newTotalUnits.toFixed(4)),
+      totalCostAfter: parseFloat(newTotalCost.toFixed(2)),
+      monthYear,
+      staggerEventDate: staggerEventDate || null,
+      isDividendBuy: isDividendBuy || false,
+      bucket: bucket || null,
+      isPending: isPending || false,
+      createdAt: FieldValue.serverTimestamp(),
+    })
+
+    await db.collection('mreit_position').doc('current').set({
+      units: parseFloat(newTotalUnits.toFixed(4)),
+      avgPrice: parseFloat(newAvgPrice.toFixed(4)),
+      totalCost: parseFloat(newTotalCost.toFixed(2)),
+      marketValue: parseFloat(newMarketValue.toFixed(2)),
+      unrealizedGain: parseFloat(newUnrealizedGain.toFixed(2)),
+      unrealizedGainPct: parseFloat(newUnrealizedGainPct.toFixed(4)),
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true })
+
+    console.log(`[recordMreitBuy] ₱${amount} @ ₱${navpu} = ${unitsBought.toFixed(4)} units`)
+    return { success: true, buyId: buyRef.id }
+  }
+)
+
+// ── 24b. recalcMreitPosition ────────────────────────────────────────────────
+
+exports.recalcMreitPosition = onRequest(
+  { region: 'us-central1', timeoutSeconds: 60 },
+  async (req, res) => {
+    const buysSnap = await db.collection('mreit_buys').orderBy('createdAt', 'asc').get()
+    if (buysSnap.empty) {
+      await db.collection('mreit_position').doc('current').set({
+        units: 0, avgPrice: 0, totalCost: 0,
+        marketValue: 0, unrealizedGain: 0, unrealizedGainPct: 0,
+        updatedAt: FieldValue.serverTimestamp(),
+      })
+      return res.status(200).json({ message: 'No buys found — position reset to zero.' })
+    }
+
+    let totalUnits = 0
+    let totalCost = 0
+
+    const batch = db.batch()
+    for (const doc of buysSnap.docs) {
+      const buy = doc.data()
+      const unitsBought = buy.unitsBought || (buy.amount / buy.navpu)
+      totalUnits += unitsBought
+      totalCost += buy.amount
+
+      const newAvgPrice = totalUnits > 0 ? totalCost / totalUnits : 0
+      batch.update(doc.ref, {
+        totalUnitsAfter: parseFloat(totalUnits.toFixed(4)),
+        totalCostAfter: parseFloat(totalCost.toFixed(2)),
+        newAvgPrice: parseFloat(newAvgPrice.toFixed(4)),
+      })
+    }
+    await batch.commit()
+
+    const latestNavpu = buysSnap.docs[buysSnap.docs.length - 1].data().navpu
+    const avgPrice = totalUnits > 0 ? totalCost / totalUnits : 0
+    const marketValue = totalUnits * latestNavpu
+    const unrealizedGain = marketValue - totalCost
+    const unrealizedGainPct = totalCost > 0 ? (unrealizedGain / totalCost) * 100 : 0
+
+    await db.collection('mreit_position').doc('current').set({
+      units: parseFloat(totalUnits.toFixed(4)),
+      avgPrice: parseFloat(avgPrice.toFixed(4)),
+      totalCost: parseFloat(totalCost.toFixed(2)),
+      marketValue: parseFloat(marketValue.toFixed(2)),
+      unrealizedGain: parseFloat(unrealizedGain.toFixed(2)),
+      unrealizedGainPct: parseFloat(unrealizedGainPct.toFixed(4)),
+      updatedAt: FieldValue.serverTimestamp(),
+    })
+
+    console.log(`[recalcMreitPosition] Rebuilt from ${buysSnap.size} buys: ${totalUnits.toFixed(4)} units, ₱${totalCost.toFixed(2)} cost`)
+    res.status(200).json({
+      message: 'Position recalculated',
+      buysCount: buysSnap.size,
+      units: parseFloat(totalUnits.toFixed(4)),
+      totalCost: parseFloat(totalCost.toFixed(2)),
+      avgPrice: parseFloat(avgPrice.toFixed(4)),
+    })
+  }
+)
+
+// ── 25. seedMreitData ───────────────────────────────────────────────────────
+
+exports.seedMreitData = onRequest(
+  { region: 'us-central1', timeoutSeconds: 120, memory: '256MiB' },
+  async (req, res) => {
+    if (req.method !== 'POST' && req.method !== 'GET') { res.status(405).send('Method not allowed'); return }
+
+    console.log('[seedMreitData] Starting...')
+    const results = { positionSeeded: false }
+
+    const posSnap = await db.collection('mreit_position').doc('current').get()
+    if (!posSnap.exists) {
+      await db.collection('mreit_position').doc('current').set({
+        units: 0, avgPrice: 0, totalCost: 0,
+        marketValue: 0, unrealizedGain: 0, unrealizedGainPct: 0,
+        updatedAt: FieldValue.serverTimestamp(),
+      })
+      results.positionSeeded = true
+    }
+
+    console.log('[seedMreitData] Done.', results)
+    res.status(200).json({ message: 'MREIT seed complete', ...results })
+  }
+)
+
+// ── 26. seedMreitNavpu ──────────────────────────────────────────────────────
+
+exports.seedMreitNavpu = onRequest(
+  { region: 'us-central1', timeoutSeconds: 540, memory: '512MiB' },
+  async (req, res) => {
+    if (req.method !== 'GET' && req.method !== 'POST') { res.status(405).send('GET or POST only'); return }
+
+    const fromDate = req.query.from || '2023-01-01'
+    const toDate   = req.query.to   || getTodayPH()
+
+    console.log(`[seedMreitNavpu] Fetching ${fromDate} → ${toDate}`)
+
+    let rawPoints
+    try {
+      rawPoints = await fetchMreitNavpuRange(fromDate, toDate)
+    } catch (err) {
+      res.status(500).json({ error: `uitf.com.ph fetch failed: ${err.message}` })
+      return
+    }
+
+    if (!rawPoints.length) {
+      res.status(200).json({ message: 'No data returned from uitf.com.ph', written: 0, skipped: 0 })
+      return
+    }
+
+    const parsed = rawPoints
+      .map((p) => ({ date: mreitLabelToDate(p.label), navpu: parseFloat(p.y) }))
+      .filter((p) => p.date && !isNaN(p.navpu) && p.navpu >= 30 && p.navpu <= 80)
+      .sort((a, b) => a.date.localeCompare(b.date))
+
+    let written = 0, skipped = 0
+    const BATCH_SIZE = 400
+
+    for (let i = 0; i < parsed.length; i += BATCH_SIZE) {
+      const batch = db.batch()
+      const chunk = parsed.slice(i, i + BATCH_SIZE)
+      for (let j = 0; j < chunk.length; j++) {
+        const { date, navpu } = chunk[j]
+        const ref = db.collection('mreit_navpu_history').doc(date)
+        const existing = await ref.get()
+        if (existing.exists) { skipped++; continue }
+        const prevNavpu = j > 0 ? chunk[j - 1].navpu : (i > 0 ? parsed[i - 1].navpu : null)
+        const dailyChange = prevNavpu !== null ? parseFloat((navpu - prevNavpu).toFixed(4)) : 0
+        batch.set(ref, {
+          date, navpu, dailyChange,
+          source: 'uitf.com.ph',
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        })
+        written++
+      }
+      await batch.commit()
+      console.log(`[seedMreitNavpu] Progress: ${i + chunk.length}/${parsed.length}`)
+    }
+
+    console.log(`[seedMreitNavpu] Done — written=${written} skipped=${skipped}`)
+    res.status(200).json({ message: 'MREIT NAVPU seed complete', written, skipped, total: parsed.length, range: `${fromDate} → ${toDate}` })
+  }
+)
+
+// ── 27. runMreitBacktest (HTTP, manual trigger) ─────────────────────────────
+
+exports.runMreitBacktest = onRequest(
+  { region: 'us-central1', timeoutSeconds: 540, memory: '512MiB' },
+  async (req, res) => {
+    if (req.method !== 'POST' && req.method !== 'GET') { res.status(405).send('Method not allowed'); return }
+    console.log('[runMreitBacktest] Starting...')
+    try {
+      const { results, summary } = await runMreitBacktest(db)
+      await db.collection('mreit_config').doc('backtest_summary').set(summary)
+      const batchSize = 400
+      for (let i = 0; i < results.length; i += batchSize) {
+        const batch = db.batch()
+        for (const r of results.slice(i, i + batchSize)) {
+          batch.set(db.collection('mreit_backtest_results').doc(r.date), r)
+        }
+        await batch.commit()
+      }
+      console.log('[runMreitBacktest] Done.', summary)
+      res.status(200).json({ message: 'MREIT backtest complete', summary })
+    } catch (err) {
+      console.error('[runMreitBacktest] Error:', err)
+      res.status(500).json({ error: err.message })
+    }
+  }
+)
+
+// ── 28. scheduledMreitBacktest ──────────────────────────────────────────────
+
+exports.scheduledMreitBacktest = onSchedule(
+  {
+    schedule: '0 11 1,15 * *',
+    timeZone: 'Asia/Manila',
+    timeoutSeconds: 540,
+    memory: '512MiB',
+  },
+  async () => {
+    console.log('[scheduledMreitBacktest] Starting...')
+    try {
+      const { results, summary } = await runMreitBacktest(db)
+      await db.collection('mreit_config').doc('backtest_summary').set(summary)
+      const batchSize = 400
+      for (let i = 0; i < results.length; i += batchSize) {
+        const batch = db.batch()
+        for (const r of results.slice(i, i + batchSize)) {
+          batch.set(db.collection('mreit_backtest_results').doc(r.date), r)
+        }
+        await batch.commit()
+      }
+      console.log('[scheduledMreitBacktest] Done.', summary.totalDays, 'days processed')
+    } catch (err) {
+      console.error('[scheduledMreitBacktest] Error:', err)
     }
   }
 )

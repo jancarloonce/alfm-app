@@ -28,15 +28,16 @@ function fmtPct(n) {
   return `${sign}${n.toFixed(2)}%`
 }
 
-const CustomTooltip = ({ active, payload }) => {
+const CustomTooltip = ({ active, payload, phpRate }) => {
   if (!active || !payload?.length) return null
   const d = payload[0]?.payload
   if (!d) return null
   return (
-    <div className="bg-slate-900 border border-slate-600 rounded-lg px-3 py-2.5 shadow-xl text-xs">
+    <div className="bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2.5 text-xs">
       <p className="font-bold text-white mb-1">{d.label}</p>
       <p className="text-slate-300">
         Price: <span className="font-bold text-white">{fmtUsd(d.price)}</span>
+        {phpRate && d.price ? <span className="text-slate-500 ml-1">({fmtPhp(d.price * phpRate)})</span> : null}
       </p>
       {d.hourlyPct != null && (
         <p className={d.hourlyPct >= 0 ? 'text-green-400' : 'text-red-400'}>
@@ -73,7 +74,12 @@ const BuyDot = (props) => {
  * @param {object|null} thresholds Latest thresholds from btcSignal.thresholds
  * @param {number|null} avgCost    User's avg cost in USD (for reference line)
  */
-export default function BtcPriceChart({ btcBuys = [], thresholds = null, avgCost = null }) {
+function fmtPhp(n) {
+  if (n == null) return '-'
+  return '₱' + Number(n).toLocaleString('en-PH', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
+}
+
+export default function BtcPriceChart({ btcBuys = [], thresholds = null, avgCost = null, phpPerUsd = null }) {
   const [candles, setCandles] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -181,14 +187,14 @@ export default function BtcPriceChart({ btcBuys = [], thresholds = null, avgCost
         </div>
         <div className="flex items-center gap-2">
           {/* Window selector */}
-          <div className="flex bg-slate-700/60 rounded-lg p-0.5 gap-0.5">
+          <div className="flex bg-neutral-800/50 rounded-lg p-0.5 gap-0.5">
             {WINDOWS.map((w, idx) => (
               <button
                 key={w.label}
                 onClick={() => setWindowIdx(idx)}
                 className={`px-3 py-1 rounded-md text-xs font-semibold transition-all ${
                   windowIdx === idx
-                    ? 'bg-slate-600 text-white'
+                    ? 'bg-neutral-700 text-white'
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
@@ -200,8 +206,8 @@ export default function BtcPriceChart({ btcBuys = [], thresholds = null, avgCost
             onClick={() => setShowZones((v) => !v)}
             className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
               showZones
-                ? 'bg-slate-700 border-slate-500 text-slate-300'
-                : 'bg-transparent border-slate-700 text-slate-500'
+                ? 'bg-neutral-800 border-neutral-700 text-slate-300'
+                : 'bg-transparent border-neutral-800 text-slate-500'
             }`}
           >
             {showZones ? 'Zones ON' : 'Zones OFF'}
@@ -240,7 +246,7 @@ export default function BtcPriceChart({ btcBuys = [], thresholds = null, avgCost
               tickFormatter={(v) => `$${Number(v).toLocaleString('en-US', { maximumFractionDigits: 0 })}`}
               width={75}
             />
-            <Tooltip content={<CustomTooltip />} />
+            <Tooltip content={<CustomTooltip phpRate={phpPerUsd} />} />
 
             {/* Threshold zone bands */}
             {showZones && thresholds && (() => {
@@ -303,11 +309,11 @@ export default function BtcPriceChart({ btcBuys = [], thresholds = null, avgCost
         </ResponsiveContainer>
       )}
 
-      <div className="mt-3 pt-3 border-t border-slate-700 flex flex-wrap gap-4 text-xs text-slate-500">
-        {currentPrice && <span>Current: <span className="text-slate-300 font-medium">{fmtUsd(currentPrice)}</span></span>}
-        {thresholds?.periodHigh && <span>30d High: <span className="text-slate-400">{fmtUsd(thresholds.periodHigh)}</span></span>}
-        {thresholds?.periodLow  && <span>30d Low: <span className="text-slate-400">{fmtUsd(thresholds.periodLow)}</span></span>}
-        {thresholds?.mean       && <span>30d Mean: <span className="text-slate-400">{fmtUsd(thresholds.mean)}</span></span>}
+      <div className="mt-3 pt-3 border-t border-neutral-800 flex flex-wrap gap-4 text-xs text-slate-500">
+        {currentPrice && <span>Current: <span className="text-slate-300 font-medium">{fmtUsd(currentPrice)}</span>{phpPerUsd ? <span className="text-slate-500"> ({fmtPhp(currentPrice * phpPerUsd)})</span> : null}</span>}
+        {thresholds?.periodHigh && <span>30d High: <span className="text-slate-400">{fmtUsd(thresholds.periodHigh)}</span>{phpPerUsd ? <span> ({fmtPhp(thresholds.periodHigh * phpPerUsd)})</span> : null}</span>}
+        {thresholds?.periodLow  && <span>30d Low: <span className="text-slate-400">{fmtUsd(thresholds.periodLow)}</span>{phpPerUsd ? <span> ({fmtPhp(thresholds.periodLow * phpPerUsd)})</span> : null}</span>}
+        {thresholds?.mean       && <span>30d Mean: <span className="text-slate-400">{fmtUsd(thresholds.mean)}</span>{phpPerUsd ? <span> ({fmtPhp(thresholds.mean * phpPerUsd)})</span> : null}</span>}
         {thresholds?.usingBaseline && <span className="text-amber-500">⚠ Using baseline thresholds</span>}
       </div>
     </div>

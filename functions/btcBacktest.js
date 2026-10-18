@@ -1,73 +1,42 @@
 'use strict'
 
-const { analyzeSignal, computeThresholds } = require('./btcSignalEngine')
+const { analyzeSignal, computeDrawdown } = require('./btcSignalEngine')
 
-const PHP_PER_USD     = 57.5    // fixed exchange rate for simulation
-const EXCHANGE_FEE    = 0.001   // 0.1% Binance taker fee per buy
-const RISK_FREE_DAILY = 0.05 / 365  // 5% annual risk-free rate expressed daily
+const PHP_PER_USD     = 57.5
+const EXCHANGE_FEE    = 0.001
+const RISK_FREE_DAILY = 0.05 / 365
 
-/**
- * BTC Backtest Engine
- * -------------------
- * Fetches historical hourly BTC/USDT candles from Binance (paginated),
- * replays the btcSignalEngine on every candle with strict no-lookahead,
- * and computes comprehensive performance metrics.
- *
- * Improvements over v1:
- *   - 0.1% Binance fee deducted from every simulated buy (reduces units received)
- *   - Running equity curve tracked at every candle for drawdown computation
- *   - Max / avg / longest drawdown computed from equity curve
- *   - Sharpe ratio computed from per-buy 24h returns (annualized, daily basis)
- *   - Max / avg consecutive losing buys (negative 24h return)
- *   - CAGR computed from first-buy portfolio value to final portfolio value
- *   - Equity curve sampled to ≤365 points for Firestore storage
- *   - Default lookback raised to 365 days for statistical significance
- *
- * No-lookahead guarantee:
- *   - Thresholds computed from candles[0..i] only
- *   - totalSpentThisMonth derived from simulated buys already recorded
- *   - Forward returns use candles[i+N] — only read after signal fires
- *
- * @param {FirebaseFirestore.Firestore} db
- * @param {number} [lookbackDays=365]
- * @returns {Promise<{results: object[], summary: object}>}
- */
 async function runBtcBacktest(db, lookbackDays = 365) {
-  // ── 1. Fetch historical candles ──────────────────────────────────────────────
-  const totalCandles = lookbackDays * 24
+  // Fetch extra 30 days (720 candles) for forward return tracking
+  const totalCandles = (lookbackDays + 30) * 24
   const candles      = await fetchHistoricalCandles(totalCandles)
 
   if (candles.length < 10) {
     throw new Error(`Insufficient candle data: only ${candles.length} candles returned`)
   }
-  console.log(`[btcBacktest] Loaded ${candles.length} hourly candles (${lookbackDays}d)`)
+  console.log(`[btcBacktest] Loaded ${candles.length} hourly candles (${lookbackDays}d + 30d buffer)`)
 
-  // ── 2. Replay signal engine on each candle ───────────────────────────────────
+  const analysisEnd = candles.length - 720
   const results     = []
-  const equityCurve = []   // {timestamp, portfolioPhp, btcPrice} — every candle
+  const equityCurve = []
 
   let simUnits        = 0
   let simTotalCostPhp = 0
   let simAvgCostUsd   = 0
-  let firstBuyTimestamp = null   // for CAGR elapsed time
+  let firstBuyTimestamp = null
 
-  const monthlySpend   = {}     // "YYYY-MM" → PHP spent
+  const monthlySpend   = {}
   let lastBuyTimestamp = null
 
   for (let i = 2; i < candles.length; i++) {
-    const candle       = candles[i]
-    const prevCandle   = candles[i - 1]
-    const twoAgoCandle = candles[i - 2]
+    const candle     = candles[i]
+    const prevCandle = candles[i - 1]
 
     const nowIso   = new Date(candle.openTime).toISOString()
     const monthKey = nowIso.slice(0, 7)
 
-    const startIdx = Math.max(0, i - 23)
-    const last24   = candles.slice(startIdx, i + 1).map((c) => c.close)
-
     const windowStart  = Math.max(0, i - 719)
     const windowCloses = candles.slice(windowStart, i + 1).map((c) => c.close)
-    const thresholds   = computeThresholds(windowCloses)
 
     const totalSpentThisMonth = monthlySpend[monthKey] || 0
 
@@ -81,28 +50,31 @@ async function runBtcBacktest(db, lookbackDays = 365) {
       ? parseFloat((candle.volume / avgVol720).toFixed(3))
       : null
 
+    const high90d = i >= 2160
+      ? Math.max(...candles.slice(i - 2160, i + 1).map((c) => c.close))
+      : Math.max(...candles.slice(0, i + 1).map((c) => c.close))
+
     const signal = analyzeSignal({
       currentPrice:                candle.close,
       prevHourPrice:               prevCandle.close,
-      twoHoursAgoPrice:            twoAgoCandle.close,
-      last24Prices:                last24,
       avgCost:                     simAvgCostUsd || null,
       totalSpentThisMonth,
       lastOpportunityBuyTimestamp: lastBuyTimestamp,
       nowIso,
-      thresholds,
+      closes:                      windowCloses,
       rsi,
-      fearGreedIndex:              null,   // not available historically
+      fearGreedIndex:              null,
       volumeRatio,
+      high90d,
+      extremeOverrideCount24h:     0,
     })
 
-    // Simulate buy with 0.1% exchange fee applied to units received
     if (signal.isActionable && signal.amount > 0 && candle.close > 0) {
       const grossUnits  = signal.amount / PHP_PER_USD / candle.close
-      const unitsBought = grossUnits * (1 - EXCHANGE_FEE)   // fee reduces BTC received
+      const unitsBought = grossUnits * (1 - EXCHANGE_FEE)
 
       simUnits        += unitsBought
-      simTotalCostPhp += signal.amount   // total PHP outlay including fee cost
+      simTotalCostPhp += signal.amount
       simAvgCostUsd    = simUnits > 0
         ? (simAvgCostUsd * (simUnits - unitsBought) + unitsBought * candle.close) / simUnits
         : candle.close
@@ -110,13 +82,11 @@ async function runBtcBacktest(db, lookbackDays = 365) {
       monthlySpend[monthKey]  = (monthlySpend[monthKey] || 0) + signal.amount
       lastBuyTimestamp        = nowIso
 
-      // Track first buy timestamp for CAGR elapsed time
       if (firstBuyTimestamp === null) {
         firstBuyTimestamp = nowIso
       }
     }
 
-    // Track equity at every candle for drawdown analysis
     const portfolioPhp = simUnits * candle.close * PHP_PER_USD
     equityCurve.push({
       timestamp:    nowIso,
@@ -124,7 +94,7 @@ async function runBtcBacktest(db, lookbackDays = 365) {
       btcPrice:     candle.close,
     })
 
-    // Forward prices for return metrics
+    // Forward returns
     const f1h  = i + 1  < candles.length ? candles[i + 1].close  : null
     const f3h  = i + 3  < candles.length ? candles[i + 3].close  : null
     const f6h  = i + 6  < candles.length ? candles[i + 6].close  : null
@@ -132,10 +102,14 @@ async function runBtcBacktest(db, lookbackDays = 365) {
     const f24h = i + 24 < candles.length ? candles[i + 24].close : null
     const f72h = i + 72 < candles.length ? candles[i + 72].close : null
 
-    const next6Closes = candles.slice(i + 1, i + 7).map((c) => c.close)
-    const avg6h = next6Closes.length > 0
-      ? parseFloat((next6Closes.reduce((a, b) => a + b, 0) / next6Closes.length).toFixed(2))
+    // 30-day (720-candle) forward return and max forward price
+    const f30d = i + 720 < candles.length ? candles[i + 720].close : null
+    const next720Closes = candles.slice(i + 1, i + 721).map((c) => c.close)
+    const maxForward30d = next720Closes.length > 0 ? Math.max(...next720Closes) : null
+    const maxReturn30d = maxForward30d != null
+      ? parseFloat(((maxForward30d - candle.close) / candle.close * 100).toFixed(3))
       : null
+    const recovered8pct = maxReturn30d != null ? maxReturn30d >= 8 : null
 
     function ret(fwd) {
       if (fwd == null) return null
@@ -148,48 +122,47 @@ async function runBtcBacktest(db, lookbackDays = 365) {
     const return12h = ret(f12h)
     const return24h = ret(f24h)
     const return72h = ret(f72h)
+    const return30d = ret(f30d)
 
     const positive24h = return24h != null ? return24h > 0 : null
-    const belowAvg6h  = avg6h     != null ? candle.close < avg6h : null
-    const correctBoth = positive24h != null && belowAvg6h != null
-      ? positive24h && belowAvg6h
-      : null
 
-    const lowestNext6  = next6Closes.length > 0 ? Math.min(...next6Closes) : null
-    const noBuyCorrect = ['NO_BUY', 'WATCH_SKIP', 'BUDGET_CAP', 'OPP_GAP_WAIT'].includes(signal.signal) && lowestNext6 != null
-      ? lowestNext6 < candle.close
-      : null
+    // Drawdown at this candle (30d lookback)
+    const { drawdownPct: drawdown30d } = computeDrawdown(windowCloses, 720)
 
-    results.push({
-      timestamp:    nowIso,
-      hour:         nowIso.slice(0, 13),
-      price:        candle.close,
-      signal:       signal.signal,
-      amount:       signal.amount,
-      isActionable: signal.isActionable,
-      bucket:       signal.bucket,
-      dipSignals:   signal.dipSignals,
-      rsi,
-      volumeRatio,
-      return1h,
-      return3h,
-      return6h,
-      return12h,
-      return24h,
-      return72h,
-      avg6hPrice:   avg6h,
-      positive24h,
-      belowAvg6h,
-      correctBoth,
-      noBuyCorrect,
-    })
+    // Only include in main analysis window (exclude the 30d buffer at the end)
+    if (i < analysisEnd || analysisEnd <= 2) {
+      results.push({
+        timestamp:    nowIso,
+        hour:         nowIso.slice(0, 13),
+        price:        candle.close,
+        signal:       signal.signal,
+        amount:       signal.amount,
+        isActionable: signal.isActionable,
+        bucket:       signal.bucket,
+        drawdownPct:  signal.drawdownPct,
+        rsi,
+        volumeRatio,
+        return1h,
+        return3h,
+        return6h,
+        return12h,
+        return24h,
+        return72h,
+        return30d,
+        maxReturn30d,
+        recovered8pct,
+        drawdown30d,
+        positive24h,
+      })
+    }
   }
 
-  // ── 3. Post-loop analytics ────────────────────────────────────────────────────
+  // ── Post-loop analytics ──────────────────────────────────────────────────
 
   const actionable    = results.filter((r) => r.isActionable && r.return24h != null)
   const actionable72  = results.filter((r) => r.isActionable && r.return72h != null)
-  const holdSignals   = results.filter((r) => r.noBuyCorrect != null)
+  const actionable30d = results.filter((r) => r.isActionable && r.return30d != null)
+  const withRecovery  = results.filter((r) => r.isActionable && r.recovered8pct != null)
 
   function avg(arr) {
     if (!arr.length) return null
@@ -216,7 +189,6 @@ async function runBtcBacktest(db, lookbackDays = 365) {
     ? parseFloat(((unrealizedPhp / simTotalCostPhp) * 100).toFixed(2))
     : null
 
-  // New metrics
   const drawdown            = computeDrawdowns(equityCurve)
   const sharpeRatio         = computeSharpe(actionable.map((r) => r.return24h))
   const consecutiveLosses   = computeConsecutiveLosses(actionable)
@@ -227,6 +199,46 @@ async function runBtcBacktest(db, lookbackDays = 365) {
   const totalFeesPaidPhp    = parseFloat((simTotalCostPhp * EXCHANGE_FEE).toFixed(2))
   const equityCurveSampled  = sampleEquityCurve(equityCurve, 365)
 
+  // ── Drawdown analysis: group by drawdown bucket ──────────────────────────
+  const drawdownBuckets = [
+    { label: '0-3%',   min: 0,  max: 3  },
+    { label: '3-5%',   min: 3,  max: 5  },
+    { label: '5-10%',  min: 5,  max: 10 },
+    { label: '10-15%', min: 10, max: 15 },
+    { label: '15-20%', min: 15, max: 20 },
+    { label: '20%+',   min: 20, max: Infinity },
+  ]
+
+  const drawdownAnalysis = drawdownBuckets.map((bucket) => {
+    const inBucket = results.filter((r) =>
+      r.drawdown30d >= bucket.min && r.drawdown30d < bucket.max &&
+      r.recovered8pct != null
+    )
+    const actionableInBucket = inBucket.filter((r) => r.isActionable)
+    const recoveredCount = inBucket.filter((r) => r.recovered8pct === true).length
+    const recoveryRate = inBucket.length > 0
+      ? parseFloat((recoveredCount / inBucket.length * 100).toFixed(1))
+      : null
+    const avgMaxReturn = inBucket.length > 0
+      ? avg(inBucket.filter((r) => r.maxReturn30d != null).map((r) => r.maxReturn30d))
+      : null
+    const avgReturn30d = inBucket.length > 0
+      ? avg(inBucket.filter((r) => r.return30d != null).map((r) => r.return30d))
+      : null
+
+    return {
+      bucket: bucket.label,
+      totalCandles: inBucket.length,
+      actionableCandles: actionableInBucket.length,
+      recoveredCount,
+      recoveryRate,
+      avgMaxReturn,
+      avgReturn30d,
+    }
+  })
+
+  const pctRecovered8pctIn30d = winRate(withRecovery, (r) => r.recovered8pct === true)
+
   const summary = {
     backtestPeriod: {
       from: results[0]?.timestamp  || null,
@@ -236,31 +248,29 @@ async function runBtcBacktest(db, lookbackDays = 365) {
     totalActionable: actionable.length,
     lookbackDays,
 
-    // Accuracy
     pctPositiveReturn24h: winRate(actionable, (r) => r.positive24h),
-    pctBelowAvg6h:        winRate(actionable, (r) => r.belowAvg6h),
-    pctCorrectBoth:       winRate(actionable, (r) => r.correctBoth),
-
-    // Win rates by horizon
     pctPositiveReturn1h:  winRate(actionable.filter((r) => r.return1h  != null), (r) => r.return1h  > 0),
     pctPositiveReturn3h:  winRate(actionable.filter((r) => r.return3h  != null), (r) => r.return3h  > 0),
     pctPositiveReturn6h:  winRate(actionable.filter((r) => r.return6h  != null), (r) => r.return6h  > 0),
     pctPositiveReturn12h: winRate(actionable.filter((r) => r.return12h != null), (r) => r.return12h > 0),
     pctPositiveReturn72h: winRate(actionable72, (r) => r.return72h > 0),
+    pctPositiveReturn30d: winRate(actionable30d, (r) => r.return30d > 0),
 
-    // Average returns
     avgReturn1h:  avg(actionable.filter((r) => r.return1h  != null).map((r) => r.return1h)),
     avgReturn3h:  avg(actionable.filter((r) => r.return3h  != null).map((r) => r.return3h)),
     avgReturn6h:  avg(actionable.filter((r) => r.return6h  != null).map((r) => r.return6h)),
     avgReturn12h: avg(actionable.filter((r) => r.return12h != null).map((r) => r.return12h)),
     avgReturn24h: avg(actionable.map((r) => r.return24h)),
     avgReturn72h: avg(actionable72.map((r) => r.return72h)),
+    avgReturn30d: avg(actionable30d.map((r) => r.return30d)),
 
-    // Hold signal effectiveness
-    noBuyEffectiveness: winRate(holdSignals, (r) => r.noBuyCorrect),
-    noBuyTotal:         holdSignals.length,
+    // 30-day recovery headline metrics
+    pctRecovered8pctIn30d,
+    avgMaxReturn30d: avg(withRecovery.map((r) => r.maxReturn30d)),
 
-    // Bucket win rates
+    // Drawdown analysis by bucket
+    drawdownAnalysis,
+
     bucketWinRates: (() => {
       const out = {}
       for (const b of ['opportunity', 'extreme_override']) {
@@ -272,12 +282,11 @@ async function runBtcBacktest(db, lookbackDays = 365) {
 
     signalBreakdown,
 
-    // ── New metrics from PDF ──────────────────────────────────────────────────
-    drawdown,            // max, avg, longest drawdown
-    sharpeRatio,         // annualized Sharpe from per-buy 24h returns
-    consecutiveLosses,   // max/avg consecutive losing buys
-    cagr,                // compound annual growth rate (%)
-    equityCurveSampled,  // sampled to ≤365 points for chart
+    drawdown,
+    sharpeRatio,
+    consecutiveLosses,
+    cagr,
+    equityCurveSampled,
 
     simulation: {
       totalBuys:        actionable.length,
@@ -305,16 +314,6 @@ async function runBtcBacktest(db, lookbackDays = 365) {
 // Analytics helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Compute drawdown statistics from the running equity curve.
- * Only counts drawdowns after the first buy (before that portfolio = 0).
- *
- * Returns:
- *   maxDrawdownPct     — worst peak-to-trough drop as a %
- *   maxDrawdownDays    — duration of longest drawdown in calendar days
- *   avgDrawdownDays    — average drawdown duration in calendar days
- *   drawdownCount      — number of distinct drawdown periods
- */
 function computeDrawdowns(equityCurve) {
   if (!equityCurve.length) return null
 
@@ -326,7 +325,7 @@ function computeDrawdowns(equityCurve) {
   const durations = []
 
   for (const pt of equityCurve) {
-    if (pt.portfolioPhp <= 0) continue   // before first buy
+    if (pt.portfolioPhp <= 0) continue
 
     if (pt.portfolioPhp >= peak) {
       if (inDrawdown && drawdownHours > 0) {
@@ -357,13 +356,6 @@ function computeDrawdowns(equityCurve) {
   }
 }
 
-/**
- * Compute annualized Sharpe ratio from an array of per-buy 24h returns (%).
- *
- * Uses daily sampling annualization (√365) and a 5% annual risk-free rate.
- * A Sharpe above 0.75 is generally considered good; above 2 is excellent.
- * Above 3 is suspicious — likely a look-ahead bias.
- */
 function computeSharpe(returns24h) {
   if (returns24h.length < 2) return null
 
@@ -374,7 +366,7 @@ function computeSharpe(returns24h) {
 
   if (stdDev === 0) return null
 
-  const rfDaily  = RISK_FREE_DAILY * 100   // in % terms
+  const rfDaily  = RISK_FREE_DAILY * 100
   const sharpeRaw = (mean - rfDaily) / stdDev
   const sharpeAnn = parseFloat((sharpeRaw * Math.sqrt(365)).toFixed(3))
 
@@ -393,10 +385,6 @@ function computeSharpe(returns24h) {
   }
 }
 
-/**
- * Track streaks of consecutive losing buys (negative 24h return).
- * A long streak tells you how much mental resilience the strategy demands.
- */
 function computeConsecutiveLosses(actionableWithReturn) {
   if (!actionableWithReturn.length) return null
 
@@ -425,20 +413,12 @@ function computeConsecutiveLosses(actionableWithReturn) {
   }
 }
 
-/**
- * CAGR: compound annual growth rate from first-buy portfolio value to final.
- * Expressed as a percentage (e.g. 42.3 means +42.3% per year).
- */
 function computeCAGR(startValue, endValue, days) {
   if (!startValue || !endValue || startValue <= 0 || days <= 0) return null
   const years = days / 365
   return parseFloat(((Math.pow(endValue / startValue, 1 / years) - 1) * 100).toFixed(2))
 }
 
-/**
- * Downsample the equity curve to at most maxPoints entries for Firestore storage.
- * Always includes the final point.
- */
 function sampleEquityCurve(equityCurve, maxPoints) {
   if (equityCurve.length <= maxPoints) return equityCurve
   const step    = Math.ceil(equityCurve.length / maxPoints)
@@ -453,10 +433,6 @@ function sampleEquityCurve(equityCurve, maxPoints) {
 // Data fetching
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Paginate backward through Binance data-api (no geo-block) to fetch
- * `totalCandles` historical 1h OHLCV candles, oldest→newest.
- */
 async function fetchHistoricalCandles(totalCandles) {
   const MAX_PER_REQUEST = 1000
   const allCandles      = []
@@ -482,7 +458,7 @@ async function fetchHistoricalCandles(totalCandles) {
     }))
 
     allCandles.unshift(...parsed)
-    endTime = raw[0][0] - 1   // move window back
+    endTime = raw[0][0] - 1
   }
 
   const seen = new Set()
@@ -491,9 +467,6 @@ async function fetchHistoricalCandles(totalCandles) {
     .filter((c) => { if (seen.has(c.openTime)) return false; seen.add(c.openTime); return true })
 }
 
-/**
- * Wilder's smoothed RSI. Returns null if insufficient data.
- */
 function calculateRSI(closes, period = 14) {
   if (closes.length < period + 1) return null
   const changes = closes.slice(1).map((c, i) => c - closes[i])

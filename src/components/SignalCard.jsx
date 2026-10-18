@@ -35,9 +35,9 @@ function fmtPeso(n) {
 const SIGNAL_CONFIG = {
   NO_BUY: {
     label: 'NO BUY',
-    bg: 'bg-slate-700',
+    bg: 'bg-neutral-800',
     text: 'text-slate-300',
-    border: 'border-slate-600',
+    border: 'border-neutral-800',
     dot: 'bg-slate-400',
     desc: 'NAVPU is too high. Hold and wait for a dip.',
   },
@@ -114,7 +114,7 @@ export default function SignalCard({ signal, todayNavpu, dailyChange }) {
         <div className="flex items-center gap-3 mb-1">
           <div className="w-2 h-2 rounded-full bg-slate-500 animate-pulse" />
           <p className="text-slate-400 text-sm">
-            No signal generated yet today. The daily function runs at 9:00 AM PH time.
+            No signal generated yet today. The daily function runs at 4:00 PM PH time.
           </p>
         </div>
       </div>
@@ -206,7 +206,7 @@ export default function SignalCard({ signal, todayNavpu, dailyChange }) {
 
           {/* Recommendation */}
           {signal?.recommendation && (
-            <p className="text-slate-300 text-sm leading-relaxed bg-slate-700/50 rounded-lg px-4 py-3 border border-slate-600">
+            <p className="text-slate-300 text-sm leading-relaxed bg-neutral-900 rounded-lg px-4 py-3 border border-neutral-800">
               {signal.recommendation}
             </p>
           )}
@@ -227,7 +227,7 @@ export default function SignalCard({ signal, todayNavpu, dailyChange }) {
         {/* Right: Dip signals + flags */}
         <div className="sm:w-56 space-y-3">
           {signal?.dipSignals && signal.dipSignals.length > 0 && (
-            <div className="bg-slate-700/50 rounded-lg p-3 border border-slate-600">
+            <div className="bg-neutral-900 rounded-lg p-3 border border-neutral-800">
               <p className="label mb-2">Dip Signals</p>
               <div className="space-y-1">
                 {signal.dipSignals.map((ds) => (
@@ -243,7 +243,7 @@ export default function SignalCard({ signal, todayNavpu, dailyChange }) {
           )}
 
           {signal?.divCycle && signal.divCycle !== 'N/A' && (
-            <div className="bg-slate-700/50 rounded-lg p-3 border border-slate-600">
+            <div className="bg-neutral-900 rounded-lg p-3 border border-neutral-800">
               <p className="label mb-1">Dividend Cycle</p>
               <p
                 className={`text-xs font-bold ${
@@ -260,7 +260,7 @@ export default function SignalCard({ signal, todayNavpu, dailyChange }) {
           )}
 
           {signal?.trendWarning && (
-            <div className="bg-slate-700/50 rounded-lg p-3 border border-slate-600">
+            <div className="bg-neutral-900 rounded-lg p-3 border border-neutral-800">
               <p className="label mb-1">Trend Warning</p>
               <p className="text-xs font-bold text-orange-400">
                 {String(signal.trendWarning).replace(/_/g, ' ')}
@@ -271,7 +271,7 @@ export default function SignalCard({ signal, todayNavpu, dailyChange }) {
       </div>
 
       {/* Execution tip */}
-      <div className="mt-4 pt-4 border-t border-slate-700">
+      <div className="mt-4 pt-4 border-t border-neutral-800">
         <p className="text-slate-500 text-xs">
           ⏰ Execution tip: Place your order{' '}
           <span className="text-slate-400 font-semibold">before 2:00 PM PH time</span> to
