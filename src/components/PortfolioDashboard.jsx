@@ -39,6 +39,7 @@ const FUND_COLORS = {
   MGPIFF:   '#3b82f6',
   BPIBGIF:  '#8b5cf6',
   MREIT:    '#f59e0b',
+  ATRAM:    '#06b6d4',
   BTC:      '#f97316',
 }
 
@@ -106,12 +107,14 @@ export default function PortfolioDashboard({
   mgpiffPosition, mgpiffNavpu,
   bpibondPosition, bpibondNavpu,
   mreitPosition, mreitNavpu,
+  atramPosition, atramNavpu,
   btcPosition, btcCurrentPrice, btcSignal, btcPhpPerUsd = 57.5,
-  todaySignal, mgpiffSignal, bpibondSignal, mreitSignal,
+  todaySignal, mgpiffSignal, bpibondSignal, mreitSignal, atramSignal,
   alfmDividends = [],
   mgpiffDividends = [],
   bpibondDividends = [],
   mreitDividends = [],
+  atramDividends = [],
   onNavigate,
 }) {
   const alfmCost  = alfmPosition?.totalCost ?? 0
@@ -142,6 +145,13 @@ export default function PortfolioDashboard({
   const mreitGain  = mreitValue - mreitCost
   const mreitGainPct = mreitCost > 0 ? (mreitGain / mreitCost) * 100 : null
 
+  const atramCost  = atramPosition?.totalCost ?? 0
+  const atramUnits = atramPosition?.units ?? 0
+  const atramNav   = atramNavpu ?? atramPosition?.avgPrice ?? 0
+  const atramValue = atramUnits > 0 ? atramUnits * atramNav : 0
+  const atramGain  = atramValue - atramCost
+  const atramGainPct = atramCost > 0 ? (atramGain / atramCost) * 100 : null
+
   const btcUnits    = btcPosition?.units ?? 0
   const btcAvgCost  = btcPosition?.avgCost ?? 0
   const btcCostPhp  = btcPosition?.totalCostPhp ?? 0
@@ -150,8 +160,8 @@ export default function PortfolioDashboard({
   const btcGainPhp  = btcValuePhp - btcCostPhp
   const btcGainPct  = btcCostPhp > 0 ? (btcGainPhp / btcCostPhp) * 100 : null
 
-  const totalCost    = alfmCost + mgpiffCost + bpibondCost + mreitCost + btcCostPhp
-  const totalValue   = alfmValue + mgpiffValue + bpibondValue + mreitValue + btcValuePhp
+  const totalCost    = alfmCost + mgpiffCost + bpibondCost + mreitCost + atramCost + btcCostPhp
+  const totalValue   = alfmValue + mgpiffValue + bpibondValue + mreitValue + atramValue + btcValuePhp
   const totalGain    = totalValue - totalCost
   const totalGainPct = totalCost > 0 ? (totalGain / totalCost) * 100 : null
   const isTotalGain  = totalGain >= 0
@@ -166,8 +176,9 @@ export default function PortfolioDashboard({
   const mgpiffDivData  = processDividends(mgpiffDividends, todayStr)
   const bpibondDivData = processDividends(bpibondDividends, todayStr)
   const mreitDivData   = processDividends(mreitDividends, todayStr)
-  const totalDividends = alfmDivData.totalEarned + mgpiffDivData.totalEarned + bpibondDivData.totalEarned + mreitDivData.totalEarned
-  const totalEstMonthly = alfmDivData.estMonthly + mgpiffDivData.estMonthly + bpibondDivData.estMonthly + mreitDivData.estMonthly
+  const atramDivData   = processDividends(atramDividends, todayStr)
+  const totalDividends = alfmDivData.totalEarned + mgpiffDivData.totalEarned + bpibondDivData.totalEarned + mreitDivData.totalEarned + atramDivData.totalEarned
+  const totalEstMonthly = alfmDivData.estMonthly + mgpiffDivData.estMonthly + bpibondDivData.estMonthly + mreitDivData.estMonthly + atramDivData.estMonthly
 
   const now2 = new Date(todayStr + 'T00:00:00')
   const nextAlfmRecord   = lastBizDayOfMonth(now2.getFullYear(), now2.getMonth() + (todayStr > lastBizDayOfMonth(now2.getFullYear(), now2.getMonth()) ? 1 : 0))
@@ -188,12 +199,21 @@ export default function PortfolioDashboard({
     }
     return null
   })()
+  const nextAtramRecord = (() => {
+    let y = now2.getFullYear(), m = now2.getMonth()
+    for (let i = 0; i < 3; i++) {
+      const d = nthTradingDayOfMonth(y, m + i, 7)
+      if (d && d >= todayStr) return d
+    }
+    return null
+  })()
 
   const allocationData = [
     { name: 'ALFMGMP', value: alfmValue,    color: FUND_COLORS.ALFMGMP },
     { name: 'MGPIFF',  value: mgpiffValue,  color: FUND_COLORS.MGPIFF },
     { name: 'BPIBGIF', value: bpibondValue, color: FUND_COLORS.BPIBGIF },
     { name: 'MREIT',   value: mreitValue,   color: FUND_COLORS.MREIT },
+    { name: 'ATRAM',   value: atramValue,   color: FUND_COLORS.ATRAM },
     { name: 'BTC',     value: btcValuePhp,  color: FUND_COLORS.BTC },
   ].filter((d) => d.value > 0)
 
@@ -202,16 +222,18 @@ export default function PortfolioDashboard({
     mgpiffSignal?.isActionable && mgpiffSignal,
     bpibondSignal?.isActionable && bpibondSignal,
     mreitSignal?.isActionable && mreitSignal,
+    atramSignal?.isActionable && atramSignal,
     btcSignal?.isActionable && btcSignal,
   ].filter(Boolean)
 
-  const totalRecommendedToday = [todaySignal, mgpiffSignal, bpibondSignal, mreitSignal, btcSignal].reduce((sum, s) => sum + (s?.amount || 0), 0)
+  const totalRecommendedToday = [todaySignal, mgpiffSignal, bpibondSignal, mreitSignal, atramSignal, btcSignal].reduce((sum, s) => sum + (s?.amount || 0), 0)
 
   const funds = [
     { key: 'alfm',    code: 'ALFMGMP', color: FUND_COLORS.ALFMGMP, signal: todaySignal,   navpu: alfmNav,    cost: alfmCost,    value: alfmValue,    gain: alfmGain,    gainPct: alfmGainPct,    units: alfmUnits,    avgPrice: alfmPosition?.avgPrice,    divs: alfmDivData.totalEarned,    hasPosition: alfmUnits > 0 },
     { key: 'mgpiff',  code: 'MGPIFF',  color: FUND_COLORS.MGPIFF,  signal: mgpiffSignal,  navpu: mgpiffNav,  cost: mgpiffCost,  value: mgpiffValue,  gain: mgpiffGain,  gainPct: mgpiffGainPct,  units: mgpiffUnits,  avgPrice: mgpiffPosition?.avgPrice,  divs: mgpiffDivData.totalEarned,  hasPosition: mgpiffUnits > 0 },
     { key: 'bpibond', code: 'BPIBGIF', color: FUND_COLORS.BPIBGIF, signal: bpibondSignal, navpu: bpibondNav, cost: bpibondCost, value: bpibondValue, gain: bpibondGain, gainPct: bpibondGainPct, units: bpibondUnits, avgPrice: bpibondPosition?.avgPrice, divs: bpibondDivData.totalEarned, hasPosition: bpibondUnits > 0 },
     { key: 'mreit',   code: 'MREIT',   color: FUND_COLORS.MREIT,   signal: mreitSignal,   navpu: mreitNav,   cost: mreitCost,   value: mreitValue,   gain: mreitGain,   gainPct: mreitGainPct,   units: mreitUnits,   avgPrice: mreitPosition?.avgPrice,   divs: mreitDivData.totalEarned,   hasPosition: mreitUnits > 0 },
+    { key: 'atram',   code: 'ATRAM',   color: FUND_COLORS.ATRAM,   signal: atramSignal,   navpu: atramNav,   cost: atramCost,   value: atramValue,   gain: atramGain,   gainPct: atramGainPct,   units: atramUnits,   avgPrice: atramPosition?.avgPrice,   divs: atramDivData.totalEarned,   hasPosition: atramUnits > 0 },
     { key: 'btc',     code: 'BTC',     color: FUND_COLORS.BTC,     signal: btcSignal,     navpu: null,       cost: btcCostPhp,  value: btcValuePhp,  gain: btcGainPhp,  gainPct: btcGainPct,     units: btcUnits,     avgPrice: null,                      divs: 0,                          hasPosition: btcUnits > 0,   isBtc: true },
   ]
 
@@ -220,6 +242,7 @@ export default function PortfolioDashboard({
     { code: 'MGPIFF',  color: FUND_COLORS.MGPIFF,  data: mgpiffDivData,  nextRecord: nextMgpiffRecord,  recordType: '7th trading day', nav: 'mgpiff' },
     { code: 'BPIBGIF', color: FUND_COLORS.BPIBGIF, data: bpibondDivData, nextRecord: nextBpibondRecord, recordType: 'Last biz day', nav: 'bpibond' },
     { code: 'MREIT',   color: FUND_COLORS.MREIT,   data: mreitDivData,   nextRecord: nextMreitRecord,   recordType: '7th trading day', nav: 'mreit' },
+    { code: 'ATRAM',   color: FUND_COLORS.ATRAM,   data: atramDivData,   nextRecord: nextAtramRecord,   recordType: '7th trading day', nav: 'atram' },
   ]
 
   return (

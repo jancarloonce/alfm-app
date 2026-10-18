@@ -1,6 +1,6 @@
 # ALFM Fund Tracker
 
-Multi-fund investment tracker for Philippine UITFs and BTC. Tracks **ALFM**, **MGPIFF**, **BPI Bond (BPIBGIF)**, **MREIT**, and **BTC** with daily buy signals, email alerts, dividend tracking, and backtesting.
+Multi-fund investment tracker for Philippine UITFs and BTC. Tracks **ALFM**, **MGPIFF**, **BPI Bond (BPIBGIF)**, **MREIT**, **ATRAM Nasdaq**, and **BTC** with daily buy signals, email alerts, dividend tracking, and backtesting.
 
 Live at [alfm-tracker.web.app](https://alfm-tracker.web.app)
 
@@ -23,6 +23,7 @@ Live at [alfm-tracker.web.app](https://alfm-tracker.web.app)
 | MGPIFF | Manulife Global Preferred Income Feeder Fund | uitf.com.ph (fund_id=357) | Percentile-based tiers |
 | BPIBGIF | BPI Global Bond Income Fund (PHP) | uitf.com.ph (fund_id=558) | Percentile-based tiers |
 | MREIT | Manulife Global REIT Feeder Fund (PHP Unhedged) | uitf.com.ph | Percentile-based tiers |
+| ATRAM | ATRAM Nasdaq Equity Income Feeder Fund | Manual / TBD | Percentile-based tiers |
 | BTC | Bitcoin | External price APIs | Drawdown from 30d high |
 
 ## Stack
@@ -32,7 +33,7 @@ Live at [alfm-tracker.web.app](https://alfm-tracker.web.app)
 - **Database:** Firestore (real-time listeners)
 - **Hosting:** Firebase Hosting
 - **Email:** Nodemailer via Gmail SMTP
-- **Scraping:** Puppeteer (ALFM), uitf.com.ph JSON API (MGPIFF, BPIBGIF, MREIT)
+- **Scraping:** Puppeteer (ALFM), uitf.com.ph JSON API (MGPIFF, BPIBGIF, MREIT), manual entry (ATRAM)
 - **Design:** Vercel/Linear-inspired dark UI — solid surfaces, subtle borders, no decorative effects
 
 ## Project structure
@@ -50,11 +51,13 @@ alfm-app/
       MgpiffDividendCard.jsx   # MGPIFF dividend history
       BpibondDividendCard.jsx  # BPIBGIF dividend history
       MreitDividendCard.jsx    # MREIT dividend history
+      AtramDividendCard.jsx    # ATRAM Nasdaq dividend history
       BuyLog.jsx               # UITF buy transaction history
       BuyModal.jsx             # ALFM buy modal
       MgpiffBuyModal.jsx       # MGPIFF buy modal
       BpibondBuyModal.jsx      # BPIBGIF buy modal
       MreitBuyModal.jsx        # MREIT buy modal
+      AtramBuyModal.jsx        # ATRAM Nasdaq buy modal
       BacktestCard.jsx         # Shared backtest results (parameterized)
       BtcSignalCard.jsx        # BTC signal display
       BtcPositionCard.jsx      # BTC position + P&L
@@ -73,17 +76,20 @@ alfm-app/
     mgpiffSignalEngine.js      # MGPIFF signal logic
     bpibondSignalEngine.js     # BPIBGIF signal logic
     mreitSignalEngine.js       # MREIT signal logic
+    atramSignalEngine.js       # ATRAM Nasdaq signal logic
     btcSignalEngine.js         # BTC drawdown signal logic
     backtest.js                # ALFM backtest engine
     mgpiffBacktest.js          # MGPIFF backtest engine
     bpibondBacktest.js         # BPIBGIF backtest engine
     mreitBacktest.js           # MREIT backtest engine
+    atramBacktest.js           # ATRAM Nasdaq backtest engine
     btcBacktest.js             # BTC backtest engine
     emailer.js                 # HTML email builder + sender
     scraper.js                 # Puppeteer NAVPU scraper (ALFM)
     mgpiffScraper.js           # MGPIFF NAVPU scraper
     bpibondScraper.js          # BPIBGIF NAVPU scraper
     mreitScraper.js            # MREIT NAVPU scraper
+    atramScraper.js            # ATRAM Nasdaq NAVPU scraper (placeholder)
     historical_navpu_data.js   # ALFM historical NAVPU entries
   SIGNAL_ENGINE.md             # ALFM signal engine documentation
   btc_signal_engine.md         # BTC signal engine documentation
@@ -123,7 +129,7 @@ Drawdown-based buy-only strategy. See `btc_signal_engine.md` for full documentat
 
 ## Cloud Functions
 
-### Per UITF fund (ALFM, MGPIFF, BPIBGIF, MREIT)
+### Per UITF fund (ALFM, MGPIFF, BPIBGIF, MREIT, ATRAM)
 
 | Function | Trigger | Description |
 |---|---|---|
@@ -158,7 +164,7 @@ npm run build && firebase deploy
 
 ## Firestore collections
 
-Each fund uses prefixed collections (`mgpiff_`, `bpibond_`, `mreit_`, `btc_`). ALFM uses unprefixed names.
+Each fund uses prefixed collections (`mgpiff_`, `bpibond_`, `mreit_`, `atram_`, `btc_`). ALFM uses unprefixed names.
 
 | Collection | Description |
 |---|---|
@@ -175,5 +181,6 @@ Each fund uses prefixed collections (`mgpiff_`, `bpibond_`, `mreit_`, `btc_`). A
 - NAVPU is published with a **1-day lag** by BPI. The 4 PM signal uses the previous business day's closing NAVPU.
 - Orders placed **before 2:00 PM** execute at today's NAVPU. After 2 PM executes at next business day's NAVPU.
 - ALFM has a **180-day lock-up** on new units. Early redemption = 1% fee.
-- Dividend record dates vary per fund: ALFM last business day, MGPIFF 7th trading day, BPIBGIF last business day, MREIT 7th trading day.
+- Dividend record dates vary per fund: ALFM last business day, MGPIFF 7th trading day, BPIBGIF last business day, MREIT 7th trading day, ATRAM 7th trading day (est.).
+- ATRAM Nasdaq orders must be placed before **10:00 AM** via DragonFi. No minimum holding period, no early exit fee. 7 business day redemption. NAVPU source is manual until automated scraping is set up.
 - BTC signals check hourly with a 1-hour minimum gap between actionable signals and ₱10k/month budget cap.

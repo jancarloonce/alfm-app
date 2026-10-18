@@ -13,7 +13,7 @@ const db = admin.firestore()
 const { scrapeNavpu } = require('./scraper')
 const { analyzeSignal, computeThresholds } = require('./signalEngine')
 const { analyzeSignal: analyzeBtcSignal } = require('./btcSignalEngine')
-const { sendSignalEmail, sendBtcSignalEmail, sendMgpiffSignalEmail, sendBpibondSignalEmail, sendMreitSignalEmail } = require('./emailer')
+const { sendSignalEmail, sendBtcSignalEmail, sendMgpiffSignalEmail, sendBpibondSignalEmail, sendMreitSignalEmail, sendAtramSignalEmail } = require('./emailer')
 const { scrapeMgpiffNavpu } = require('./mgpiffScraper')
 const { analyzeSignal: analyzeMgpiffSignal, computeMgpiffThresholds, MGPIFF_INITIAL_THRESHOLDS } = require('./mgpiffSignalEngine')
 const { HISTORICAL_NAVPU } = require('./historical_navpu_data')
@@ -26,6 +26,9 @@ const { runBpibondBacktest } = require('./bpibondBacktest')
 const { scrapeMreitNavpu, fetchNavpuRange: fetchMreitNavpuRange, labelToDate: mreitLabelToDate } = require('./mreitScraper')
 const { analyzeSignal: analyzeMreitSignal, computeMreitThresholds, MREIT_INITIAL_THRESHOLDS } = require('./mreitSignalEngine')
 const { runMreitBacktest } = require('./mreitBacktest')
+const { scrapeAtramNavpu } = require('./atramScraper')
+const { analyzeSignal: analyzeAtramSignal, computeAtramThresholds, ATRAM_INITIAL_THRESHOLDS } = require('./atramSignalEngine')
+const { runAtramBacktest } = require('./atramBacktest')
 
 // Secrets:set via: firebase functions:config:set gmail.user="..." gmail.pass="..."
 // In v2, use defineSecret for proper secret management
@@ -338,6 +341,21 @@ function getMgpiffDistributionDates(todayStr) {
  * Same pattern as MGPIFF.
  */
 function getMreitDistributionDates(todayStr) {
+  const dates = []
+  const now = new Date(todayStr + 'T00:00:00')
+  for (let i = -2; i <= 3; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() + i, 1)
+    const date = nthTradingDayOfMonth(d.getFullYear(), d.getMonth(), 7)
+    if (date) dates.push(date)
+  }
+  return dates
+}
+
+/**
+ * Compute ATRAM Nasdaq distribution dates (7th trading day of each month)
+ * Same pattern as MGPIFF/MREIT — monthly dividends.
+ */
+function getAtramDistributionDates(todayStr) {
   const dates = []
   const now = new Date(todayStr + 'T00:00:00')
   for (let i = -2; i <= 3; i++) {
@@ -2971,6 +2989,415 @@ exports.scheduledMreitBacktest = onSchedule(
       console.log('[scheduledMreitBacktest] Done.', summary.totalDays, 'days processed')
     } catch (err) {
       console.error('[scheduledMreitBacktest] Error:', err)
+    }
+  }
+)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ATRAM NASDAQ EQUITY INCOME FEEDER FUND
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── 29. dailyAtramCheck ─────────────────────────────────────────────────────
+
+exports.dailyAtramCheck = onSchedule(
+  {
+    schedule: '0 16 * * *',
+    timeZone: 'Asia/Manila',
+    memory: '256MiB',
+    timeoutSeconds: 60,
+    secrets: [gmailUser, gmailPass],
+  },
+  async () => {
+    const todayStr = getTodayPH()
+    const monthYear = getMonthPH()
+
+    console.log(`[dailyAtramCheck] Running for ${todayStr}`)
+
+    if (isNonTradingDay(todayStr)) {
+      const reason = isWeekend(todayStr) ? 'weekend' : 'PH public holiday'
+      console.log(`[dailyAtramCheck] Skipping — ${reason}`)
+      return
+    }
+
+    const yesterday = offsetDate(todayStr, -1)
+    const { navpu: scrapedNavpu, effectiveDate: scrapedDate, source, error: scrapeError } = await scrapeAtramNavpu(yesterday)
+
+    if (scrapeError || scrapedNavpu === null) {
+      console.error('[dailyAtramCheck] Scraping failed:', scrapeError)
+      await db.collection('atram_scrape_errors').doc(todayStr).set({
+        date: todayStr, scrapeError: scrapeError || 'Unknown', createdAt: FieldValue.serverTimestamp(),
+      })
+      return
+    }
+
+    const navpuDate = scrapedDate || yesterday
+    console.log(`[dailyAtramCheck] Scraped NAVPU: ${scrapedNavpu} from ${source} (date: ${navpuDate})`)
+
+    const recentDocs = await db.collection('atram_navpu_history')
+      .where('date', '<', todayStr)
+      .orderBy('date', 'desc')
+      .limit(14)
+      .get()
+    const recentNavpus = recentDocs.docs
+      .map((d) => d.data())
+      .filter((d) => !isWeekend(d.date))
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map((d) => d.navpu)
+      .filter((n) => n !== null)
+
+    const yesterdayNavpu = recentNavpus.length > 0 ? recentNavpus[recentNavpus.length - 1] : null
+    const twoDaysAgoNavpu = recentNavpus.length > 1 ? recentNavpus[recentNavpus.length - 2] : null
+    const last7Navpus = [...recentNavpus.slice(-6), scrapedNavpu]
+
+    const positionSnap = await db.collection('atram_position').doc('current').get()
+    const position = positionSnap.exists ? positionSnap.data() : {}
+    const avgPrice = position.avgPrice && position.avgPrice > 0 ? position.avgPrice : null
+
+    const buysSnap = await db.collection('atram_buys').where('monthYear', '==', monthYear).get()
+    const monthBuys = buysSnap.docs.map((d) => d.data())
+    const dividendBuyDoneThisMonth = monthBuys.some((b) => b.isDividendBuy === true)
+    const oppBuys = monthBuys.filter((b) => !b.isDividendBuy && b.bucket !== 'extreme_override')
+    const staggerSeen = new Set()
+    let opportunityBuyCountThisMonth = 0
+    for (const buy of oppBuys) {
+      if (buy.staggerEventDate) {
+        if (!staggerSeen.has(buy.staggerEventDate)) { staggerSeen.add(buy.staggerEventDate); opportunityBuyCountThisMonth++ }
+      } else {
+        opportunityBuyCountThisMonth++
+      }
+    }
+    const oppDates = oppBuys.map((b) => b.date).sort()
+    const lastOpportunityBuyDate = oppDates.length > 0 ? oppDates[oppDates.length - 1] : null
+
+    const recordDates = getAtramDistributionDates(todayStr)
+
+    const allNavpuSnap = await db.collection('atram_navpu_history').orderBy('date', 'asc').get()
+    const allNavpuValues = allNavpuSnap.docs
+      .filter((d) => !isWeekend(d.data().date))
+      .map((d) => d.data().navpu)
+      .filter((v) => v != null && !isNaN(v))
+    const thresholds = computeAtramThresholds(allNavpuValues)
+
+    await db.collection('atram_config').doc('thresholds').set(thresholds)
+
+    const signal = analyzeAtramSignal({
+      todayNavpu: scrapedNavpu,
+      yesterdayNavpu,
+      twoDaysAgoNavpu,
+      last7Navpus,
+      avgPrice,
+      dividendBuyDoneThisMonth,
+      opportunityBuyCountThisMonth,
+      lastOpportunityBuyDate,
+      todayStr,
+      recordDates,
+      thresholds,
+    })
+
+    console.log(`[dailyAtramCheck] Signal: ${signal.signal} amount=${signal.amount}`)
+
+    await db.collection('atram_navpu_history').doc(navpuDate).set({
+      date: navpuDate,
+      navpu: scrapedNavpu,
+      source,
+      dailyChange: signal.dailyChange,
+      createdAt: FieldValue.serverTimestamp(),
+    })
+
+    await db.collection('atram_signals').doc(todayStr).set({
+      ...signal,
+      navpu: scrapedNavpu,
+      monthYear,
+      createdAt: FieldValue.serverTimestamp(),
+    })
+
+    if (position.units && position.units > 0) {
+      const marketValue = position.units * scrapedNavpu
+      const unrealizedGain = marketValue - (position.totalCost || 0)
+      const unrealizedGainPct = position.totalCost > 0
+        ? parseFloat(((unrealizedGain / position.totalCost) * 100).toFixed(4)) : 0
+      await db.collection('atram_position').doc('current').update({
+        marketValue: parseFloat(marketValue.toFixed(2)),
+        unrealizedGain: parseFloat(unrealizedGain.toFixed(2)),
+        unrealizedGainPct,
+        updatedAt: FieldValue.serverTimestamp(),
+      })
+    }
+
+    try {
+      const user = gmailUser.value()
+      const pass = gmailPass.value()
+      if (user && pass) {
+        await sendAtramSignalEmail(signal, todayStr, user, pass)
+        console.log('[dailyAtramCheck] Email sent.')
+      }
+    } catch (emailErr) {
+      console.error('[dailyAtramCheck] Email error (non-fatal):', emailErr.message)
+    }
+
+    console.log('[dailyAtramCheck] Done.')
+  }
+)
+
+// ── 30. recordAtramBuy ──────────────────────────────────────────────────────
+
+exports.recordAtramBuy = onCall(
+  { region: 'us-central1', cors: true },
+  async (request) => {
+    const {
+      amount,
+      navpu,
+      unitsOverride = null,
+      isDividendBuy = false,
+      bucket = null,
+      isPending = false,
+      staggerEventDate = null,
+      date: dateOverride = null,
+    } = request.data
+
+    if (!amount || !navpu || amount <= 0 || navpu <= 0) throw new Error('Invalid amount or navpu')
+
+    const todayStr = dateOverride || getTodayPH()
+    const monthYear = todayStr.substring(0, 7)
+
+    const positionSnap = await db.collection('atram_position').doc('current').get()
+    const position = positionSnap.exists
+      ? positionSnap.data()
+      : { units: 0, avgPrice: 0, totalCost: 0 }
+
+    const currentUnits = position.units || 0
+    const currentCost = position.totalCost || 0
+    const unitsBought = unitsOverride != null ? unitsOverride : amount / navpu
+    const newTotalUnits = currentUnits + unitsBought
+    const newTotalCost = currentCost + amount
+    const newAvgPrice = newTotalUnits > 0 ? newTotalCost / newTotalUnits : 0
+    const newMarketValue = newTotalUnits * navpu
+    const newUnrealizedGain = newMarketValue - newTotalCost
+    const newUnrealizedGainPct = newTotalCost > 0 ? (newUnrealizedGain / newTotalCost) * 100 : 0
+
+    const buyRef = await db.collection('atram_buys').add({
+      date: todayStr,
+      amount: parseFloat(amount.toFixed(2)),
+      navpu: parseFloat(parseFloat(navpu).toFixed(4)),
+      unitsBought: parseFloat(unitsBought.toFixed(4)),
+      newAvgPrice: parseFloat(newAvgPrice.toFixed(4)),
+      totalUnitsAfter: parseFloat(newTotalUnits.toFixed(4)),
+      totalCostAfter: parseFloat(newTotalCost.toFixed(2)),
+      monthYear,
+      staggerEventDate: staggerEventDate || null,
+      isDividendBuy: isDividendBuy || false,
+      bucket: bucket || null,
+      isPending: isPending || false,
+      createdAt: FieldValue.serverTimestamp(),
+    })
+
+    await db.collection('atram_position').doc('current').set({
+      units: parseFloat(newTotalUnits.toFixed(4)),
+      avgPrice: parseFloat(newAvgPrice.toFixed(4)),
+      totalCost: parseFloat(newTotalCost.toFixed(2)),
+      marketValue: parseFloat(newMarketValue.toFixed(2)),
+      unrealizedGain: parseFloat(newUnrealizedGain.toFixed(2)),
+      unrealizedGainPct: parseFloat(newUnrealizedGainPct.toFixed(4)),
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true })
+
+    console.log(`[recordAtramBuy] ₱${amount} @ ₱${navpu} = ${unitsBought.toFixed(4)} units`)
+    return { success: true, buyId: buyRef.id }
+  }
+)
+
+// ── 30b. recalcAtramPosition ────────────────────────────────────────────────
+
+exports.recalcAtramPosition = onRequest(
+  { region: 'us-central1', timeoutSeconds: 60 },
+  async (req, res) => {
+    const buysSnap = await db.collection('atram_buys').orderBy('createdAt', 'asc').get()
+    if (buysSnap.empty) {
+      await db.collection('atram_position').doc('current').set({
+        units: 0, avgPrice: 0, totalCost: 0,
+        marketValue: 0, unrealizedGain: 0, unrealizedGainPct: 0,
+        updatedAt: FieldValue.serverTimestamp(),
+      })
+      return res.status(200).json({ message: 'No buys found — position reset to zero.' })
+    }
+
+    let totalUnits = 0
+    let totalCost = 0
+
+    const batch = db.batch()
+    for (const doc of buysSnap.docs) {
+      const buy = doc.data()
+      const unitsBought = buy.unitsBought || (buy.amount / buy.navpu)
+      totalUnits += unitsBought
+      totalCost += buy.amount
+
+      const newAvgPrice = totalUnits > 0 ? totalCost / totalUnits : 0
+      batch.update(doc.ref, {
+        totalUnitsAfter: parseFloat(totalUnits.toFixed(4)),
+        totalCostAfter: parseFloat(totalCost.toFixed(2)),
+        newAvgPrice: parseFloat(newAvgPrice.toFixed(4)),
+      })
+    }
+    await batch.commit()
+
+    const latestNavpu = buysSnap.docs[buysSnap.docs.length - 1].data().navpu
+    const avgPrice = totalUnits > 0 ? totalCost / totalUnits : 0
+    const marketValue = totalUnits * latestNavpu
+    const unrealizedGain = marketValue - totalCost
+    const unrealizedGainPct = totalCost > 0 ? (unrealizedGain / totalCost) * 100 : 0
+
+    await db.collection('atram_position').doc('current').set({
+      units: parseFloat(totalUnits.toFixed(4)),
+      avgPrice: parseFloat(avgPrice.toFixed(4)),
+      totalCost: parseFloat(totalCost.toFixed(2)),
+      marketValue: parseFloat(marketValue.toFixed(2)),
+      unrealizedGain: parseFloat(unrealizedGain.toFixed(2)),
+      unrealizedGainPct: parseFloat(unrealizedGainPct.toFixed(4)),
+      updatedAt: FieldValue.serverTimestamp(),
+    })
+
+    console.log(`[recalcAtramPosition] Rebuilt from ${buysSnap.size} buys: ${totalUnits.toFixed(4)} units, ₱${totalCost.toFixed(2)} cost`)
+    res.status(200).json({
+      message: 'Position recalculated',
+      buysCount: buysSnap.size,
+      units: parseFloat(totalUnits.toFixed(4)),
+      totalCost: parseFloat(totalCost.toFixed(2)),
+      avgPrice: parseFloat(avgPrice.toFixed(4)),
+    })
+  }
+)
+
+// ── 31. seedAtramData ───────────────────────────────────────────────────────
+
+exports.seedAtramData = onRequest(
+  { region: 'us-central1', timeoutSeconds: 120, memory: '256MiB' },
+  async (req, res) => {
+    if (req.method !== 'POST' && req.method !== 'GET') { res.status(405).send('Method not allowed'); return }
+
+    console.log('[seedAtramData] Starting...')
+    const results = { positionSeeded: false }
+
+    const posSnap = await db.collection('atram_position').doc('current').get()
+    if (!posSnap.exists) {
+      await db.collection('atram_position').doc('current').set({
+        units: 0, avgPrice: 0, totalCost: 0,
+        marketValue: 0, unrealizedGain: 0, unrealizedGainPct: 0,
+        updatedAt: FieldValue.serverTimestamp(),
+      })
+      results.positionSeeded = true
+    }
+
+    console.log('[seedAtramData] Done.', results)
+    res.status(200).json({ message: 'ATRAM seed complete', ...results })
+  }
+)
+
+// ── 32. seedAtramNavpu ──────────────────────────────────────────────────────
+
+exports.seedAtramNavpu = onRequest(
+  { region: 'us-central1', timeoutSeconds: 540, memory: '512MiB' },
+  async (req, res) => {
+    if (req.method !== 'GET' && req.method !== 'POST') { res.status(405).send('GET or POST only'); return }
+
+    // Manual NAVPU seeding — accepts JSON array of { date, navpu } entries
+    // POST body: { entries: [{ date: "2026-10-15", navpu: 108.1234 }, ...] }
+    if (req.method === 'POST' && req.body && req.body.entries) {
+      const entries = req.body.entries
+      if (!Array.isArray(entries) || entries.length === 0) {
+        return res.status(400).json({ error: 'entries must be a non-empty array of { date, navpu }' })
+      }
+
+      let written = 0, skipped = 0
+      const BATCH_SIZE = 400
+
+      const parsed = entries
+        .filter((e) => e.date && !isNaN(parseFloat(e.navpu)) && parseFloat(e.navpu) >= 50 && parseFloat(e.navpu) <= 200)
+        .sort((a, b) => a.date.localeCompare(b.date))
+
+      for (let i = 0; i < parsed.length; i += BATCH_SIZE) {
+        const batch = db.batch()
+        const chunk = parsed.slice(i, i + BATCH_SIZE)
+        for (let j = 0; j < chunk.length; j++) {
+          const { date, navpu } = chunk[j]
+          const navpuVal = parseFloat(navpu)
+          const ref = db.collection('atram_navpu_history').doc(date)
+          const existing = await ref.get()
+          if (existing.exists) { skipped++; continue }
+          const prevNavpu = j > 0 ? parseFloat(chunk[j - 1].navpu) : (i > 0 ? parseFloat(parsed[i - 1].navpu) : null)
+          const dailyChange = prevNavpu !== null ? parseFloat((navpuVal - prevNavpu).toFixed(4)) : 0
+          batch.set(ref, {
+            date, navpu: navpuVal, dailyChange,
+            source: 'manual',
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          })
+          written++
+        }
+        await batch.commit()
+        console.log(`[seedAtramNavpu] Progress: ${i + chunk.length}/${parsed.length}`)
+      }
+
+      console.log(`[seedAtramNavpu] Done — written=${written} skipped=${skipped}`)
+      return res.status(200).json({ message: 'ATRAM NAVPU seed complete', written, skipped, total: parsed.length })
+    }
+
+    res.status(200).json({
+      message: 'ATRAM NAVPU seed — no automated source. POST { entries: [{ date, navpu }, ...] } to seed manually.',
+    })
+  }
+)
+
+// ── 33. runAtramBacktest (HTTP, manual trigger) ─────────────────────────────
+
+exports.runAtramBacktest = onRequest(
+  { region: 'us-central1', timeoutSeconds: 540, memory: '512MiB' },
+  async (req, res) => {
+    if (req.method !== 'POST' && req.method !== 'GET') { res.status(405).send('Method not allowed'); return }
+    console.log('[runAtramBacktest] Starting...')
+    try {
+      const { results, summary } = await runAtramBacktest(db)
+      await db.collection('atram_config').doc('backtest_summary').set(summary)
+      const batchSize = 400
+      for (let i = 0; i < results.length; i += batchSize) {
+        const batch = db.batch()
+        for (const r of results.slice(i, i + batchSize)) {
+          batch.set(db.collection('atram_backtest_results').doc(r.date), r)
+        }
+        await batch.commit()
+      }
+      console.log('[runAtramBacktest] Done.', summary)
+      res.status(200).json({ message: 'ATRAM backtest complete', summary })
+    } catch (err) {
+      console.error('[runAtramBacktest] Error:', err)
+      res.status(500).json({ error: err.message })
+    }
+  }
+)
+
+// ── 34. scheduledAtramBacktest ──────────────────────────────────────────────
+
+exports.scheduledAtramBacktest = onSchedule(
+  {
+    schedule: '0 11 1,15 * *',
+    timeZone: 'Asia/Manila',
+    timeoutSeconds: 540,
+    memory: '512MiB',
+  },
+  async () => {
+    console.log('[scheduledAtramBacktest] Starting...')
+    try {
+      const { results, summary } = await runAtramBacktest(db)
+      await db.collection('atram_config').doc('backtest_summary').set(summary)
+      const batchSize = 400
+      for (let i = 0; i < results.length; i += batchSize) {
+        const batch = db.batch()
+        for (const r of results.slice(i, i + batchSize)) {
+          batch.set(db.collection('atram_backtest_results').doc(r.date), r)
+        }
+        await batch.commit()
+      }
+      console.log('[scheduledAtramBacktest] Done.', summary.totalDays, 'days processed')
+    } catch (err) {
+      console.error('[scheduledAtramBacktest] Error:', err)
     }
   }
 )

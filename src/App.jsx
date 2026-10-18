@@ -32,6 +32,8 @@ import BpibondDividendCard from './components/BpibondDividendCard'
 import BpibondBuyModal from './components/BpibondBuyModal'
 import MreitBuyModal from './components/MreitBuyModal'
 import MreitDividendCard from './components/MreitDividendCard'
+import AtramBuyModal from './components/AtramBuyModal'
+import AtramDividendCard from './components/AtramDividendCard'
 import PortfolioDashboard from './components/PortfolioDashboard'
 
 function getTodayPH() {
@@ -53,7 +55,7 @@ function getCurrentMonthPH() {
 
 export default function App() {
   // ── Tab state ────────────────────────────────────────────────────────────────
-  const [activeTab, setActiveTab] = useState('overview')  // 'overview' | 'alfm' | 'btc' | 'mgpiff' | 'bpibond' | 'mreit' | 'tools'
+  const [activeTab, setActiveTab] = useState('overview')  // 'overview' | 'alfm' | 'btc' | 'mgpiff' | 'bpibond' | 'mreit' | 'atram' | 'tools'
 
   // ── ALFM state ───────────────────────────────────────────────────────────────
   const [todaySignal, setTodaySignal] = useState(null)
@@ -106,6 +108,18 @@ export default function App() {
   const [showMreitBuyModal, setShowMreitBuyModal] = useState(false)
   const [mreitLoading, setMreitLoading] = useState(true)
   const [mreitDividends, setMreitDividends] = useState([])
+
+  // ── ATRAM Nasdaq state ───────────────────────────────────────────────────────
+  const [atramSignal, setAtramSignal] = useState(null)
+  const [atramPosition, setAtramPosition] = useState(null)
+  const [atramNavHistory, setAtramNavHistory] = useState([])
+  const [atramBuys, setAtramBuys] = useState([])
+  const [atramThresholds, setAtramThresholds] = useState(null)
+  const [atramMonthlyBuyCount, setAtramMonthlyBuyCount] = useState(0)
+  const [atramDividendBuyDone, setAtramDividendBuyDone] = useState(false)
+  const [showAtramBuyModal, setShowAtramBuyModal] = useState(false)
+  const [atramLoading, setAtramLoading] = useState(true)
+  const [atramDividends, setAtramDividends] = useState([])
 
   // ── BTC state ────────────────────────────────────────────────────────────────
   const [btcSignal, setBtcSignal] = useState(null)
@@ -443,6 +457,66 @@ export default function App() {
     return () => unsub()
   }, [])
 
+  // ── ATRAM Nasdaq listeners ──────────────────────────────────────────────────
+
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'atram_signals', todayStr), (snap) => {
+      setAtramSignal(snap.exists() ? { id: snap.id, ...snap.data() } : null)
+      setAtramLoading(false)
+    }, () => setAtramLoading(false))
+    return () => unsub()
+  }, [todayStr])
+
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'atram_position', 'current'), (snap) => {
+      setAtramPosition(snap.exists() ? snap.data() : null)
+    })
+    return () => unsub()
+  }, [])
+
+  useEffect(() => {
+    const q = query(collection(db, 'atram_navpu_history'), orderBy('date', 'asc'))
+    const unsub = onSnapshot(q, (snap) => {
+      setAtramNavHistory(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
+    })
+    return () => unsub()
+  }, [])
+
+  useEffect(() => {
+    const q = query(collection(db, 'atram_buys'), orderBy('createdAt', 'desc'))
+    const unsub = onSnapshot(q, (snap) => {
+      const data = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+      setAtramBuys(data)
+      const thisMonth = data.filter((b) => b.monthYear === currentMonthStr)
+      const oppBuys = thisMonth.filter((b) => !b.isDividendBuy && b.bucket !== 'extreme_override')
+      const staggerSeen = new Set()
+      let oppCount = 0
+      for (const buy of oppBuys) {
+        if (buy.staggerEventDate) {
+          if (!staggerSeen.has(buy.staggerEventDate)) { staggerSeen.add(buy.staggerEventDate); oppCount++ }
+        } else { oppCount++ }
+      }
+      setAtramMonthlyBuyCount(oppCount)
+      setAtramDividendBuyDone(thisMonth.some((b) => b.isDividendBuy === true))
+    })
+    return () => unsub()
+  }, [currentMonthStr])
+
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'atram_config', 'thresholds'), (snap) => {
+      if (snap.exists()) setAtramThresholds(snap.data())
+    })
+    return () => unsub()
+  }, [])
+
+  useEffect(() => {
+    const q = query(collection(db, 'atram_dividends'), orderBy('date', 'asc'))
+    const unsub = onSnapshot(q, (snap) => {
+      setAtramDividends(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
+    })
+    return () => unsub()
+  }, [])
+
   // Use most recent available NAVPU (published with 1-day lag, stored under effective date)
   // Filter out null-navpu docs written by failed scrape runs so they don't poison the latest value
   const sortedHistory = [...navHistory].filter((n) => n.navpu != null).sort((a, b) => a.date.localeCompare(b.date))
@@ -496,6 +570,7 @@ export default function App() {
               { key: 'mgpiff', label: 'MGPIFF', color: 'blue', signal: mgpiffSignal?.isActionable, fullName: 'Manulife Global Preferred Income Fund Feeder Fund' },
               { key: 'bpibond', label: 'BPIGBIF', color: 'violet', signal: bpibondSignal?.isActionable, fullName: 'BPI Global Bond Income Fund Class P (PHP Class)' },
               { key: 'mreit', label: 'MREIT', color: 'amber', signal: mreitSignal?.isActionable, fullName: 'Manulife Global REIT Feeder Fund PhP-Unhedged' },
+              { key: 'atram', label: 'ATRAM', color: 'cyan', signal: atramSignal?.isActionable, fullName: 'ATRAM Nasdaq Equity Income Feeder Fund' },
               { key: 'btc', label: 'BTC', color: 'orange', signal: btcSignal?.isActionable, fullName: 'Bitcoin' },
             ].map(({ key, label, color, signal, fullName }) => (
               <button
@@ -525,6 +600,7 @@ export default function App() {
           mgpiff: 'Manulife Global Preferred Income Fund Feeder Fund',
           bpibond: 'BPI Global Bond Income Fund Class P (PHP Class)',
           mreit: 'Manulife Global REIT Feeder Fund PhP-Unhedged',
+          atram: 'ATRAM Nasdaq Equity Income Feeder Fund',
           btc: 'Bitcoin',
         }
         return FUND_NAMES[activeTab] ? (
@@ -546,6 +622,8 @@ export default function App() {
             bpibondNavpu={bpibondNavHistory.length > 0 ? bpibondNavHistory.filter(n => n.navpu != null).at(-1)?.navpu : null}
             mreitPosition={mreitPosition}
             mreitNavpu={mreitNavHistory.length > 0 ? mreitNavHistory.filter(n => n.navpu != null).at(-1)?.navpu : null}
+            atramPosition={atramPosition}
+            atramNavpu={atramNavHistory.length > 0 ? atramNavHistory.filter(n => n.navpu != null).at(-1)?.navpu : null}
             btcPosition={btcPosition}
             btcCurrentPrice={btcCurrentPrice}
             btcSignal={btcSignal}
@@ -554,10 +632,12 @@ export default function App() {
             mgpiffSignal={mgpiffSignal}
             bpibondSignal={bpibondSignal}
             mreitSignal={mreitSignal}
+            atramSignal={atramSignal}
             alfmDividends={alfmDividends}
             mgpiffDividends={mgpiffDividends}
             bpibondDividends={bpibondDividends}
             mreitDividends={mreitDividends}
+            atramDividends={atramDividends}
             onNavigate={setActiveTab}
           />
         </main>
@@ -789,6 +869,56 @@ export default function App() {
         </main>
       )}
 
+      {/* ── ATRAM Nasdaq Tab ──────────────────────────────────────────────────── */}
+      {activeTab === 'atram' && (
+        <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+          {atramLoading ? (
+            <div className="flex items-center justify-center py-16">
+              <p className="text-slate-400 animate-pulse">Loading ATRAM Nasdaq signals...</p>
+            </div>
+          ) : (
+            <>
+              <SignalCard
+                signal={atramSignal}
+                todayNavpu={atramNavHistory.length > 0 ? atramNavHistory[atramNavHistory.length - 1]?.navpu : null}
+                dailyChange={atramSignal?.dailyChange ?? null}
+              />
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <PositionCard
+                  position={atramPosition}
+                  todayNavpu={atramNavHistory.length > 0 ? atramNavHistory[atramNavHistory.length - 1]?.navpu : null}
+                  monthlyBuyCount={atramMonthlyBuyCount}
+                  dividendBuyDone={atramDividendBuyDone}
+                />
+                <NavpuCard
+                  todayNavpu={atramNavHistory.length > 0 ? atramNavHistory[atramNavHistory.length - 1]?.navpu : null}
+                  navDate={atramNavHistory.length > 0 ? atramNavHistory[atramNavHistory.length - 1]?.date : null}
+                  dailyChange={atramSignal?.dailyChange ?? null}
+                  navHigh={atramNavHistory.length > 0 ? Math.max(...atramNavHistory.slice(-90).map(n => n.navpu).filter(Boolean)) : null}
+                  navLow={atramNavHistory.length > 0 ? Math.min(...atramNavHistory.slice(-90).map(n => n.navpu).filter(Boolean)) : null}
+                  navMean={atramNavHistory.length > 0 ? parseFloat((atramNavHistory.slice(-90).map(n => n.navpu).filter(Boolean).reduce((a, b) => a + b, 0) / atramNavHistory.slice(-90).filter(n => n.navpu).length).toFixed(4)) : null}
+                  thresholds={atramThresholds}
+                />
+                <AtramDividendCard
+                  todayStr={todayStr}
+                  buys={atramBuys}
+                  currentNavpu={atramNavHistory.length > 0 ? atramNavHistory[atramNavHistory.length - 1]?.navpu : null}
+                />
+              </div>
+              <NavChart navHistory={atramNavHistory.slice(-90)} buys={atramBuys} />
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <BuyLog buys={atramBuys} fund="atram" />
+                <BacktestCard
+                  summaryCollection="atram_config"
+                  summaryDoc="backtest_summary"
+                  resultsCollection="atram_backtest_results"
+                />
+              </div>
+            </>
+          )}
+        </main>
+      )}
+
       {/* Floating Buy Button — ALFM tab */}
       {activeTab === 'alfm' && (
         <button
@@ -861,6 +991,19 @@ export default function App() {
         </button>
       )}
 
+      {/* Floating Buy Button — ATRAM tab */}
+      {activeTab === 'atram' && (
+        <button
+          onClick={() => setShowAtramBuyModal(true)}
+          className="fixed bottom-6 right-6 bg-cyan-600 hover:bg-cyan-500 text-white font-medium px-5 py-3 rounded-lg transition-colors flex items-center gap-2 z-40"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
+          </svg>
+          I Bought
+        </button>
+      )}
+
       {/* ALFM Buy Modal */}
       {showBuyModal && (
         <BuyModal
@@ -923,6 +1066,18 @@ export default function App() {
           todaySignal={mreitSignal}
           todayNavpu={mreitNavHistory.length > 0 ? mreitNavHistory[mreitNavHistory.length - 1]?.navpu : null}
           position={mreitPosition}
+          todayStr={todayStr}
+          currentMonthStr={currentMonthStr}
+        />
+      )}
+
+      {/* ATRAM Buy Modal */}
+      {showAtramBuyModal && (
+        <AtramBuyModal
+          onClose={() => setShowAtramBuyModal(false)}
+          todaySignal={atramSignal}
+          todayNavpu={atramNavHistory.length > 0 ? atramNavHistory[atramNavHistory.length - 1]?.navpu : null}
+          position={atramPosition}
           todayStr={todayStr}
           currentMonthStr={currentMonthStr}
         />
