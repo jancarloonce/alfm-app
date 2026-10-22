@@ -13,19 +13,13 @@ const db = admin.firestore()
 const { scrapeNavpu } = require('./scraper')
 const { analyzeSignal, computeThresholds } = require('./signalEngine')
 const { analyzeSignal: analyzeBtcSignal } = require('./btcSignalEngine')
-const { sendSignalEmail, sendBtcSignalEmail, sendMgpiffSignalEmail, sendBpibondSignalEmail, sendMreitSignalEmail, sendAtramSignalEmail } = require('./emailer')
-const { scrapeMgpiffNavpu } = require('./mgpiffScraper')
-const { analyzeSignal: analyzeMgpiffSignal, computeMgpiffThresholds, MGPIFF_INITIAL_THRESHOLDS } = require('./mgpiffSignalEngine')
+const { sendSignalEmail, sendBtcSignalEmail, sendBpibondSignalEmail, sendAtramSignalEmail } = require('./emailer')
 const { HISTORICAL_NAVPU } = require('./historical_navpu_data')
 const { runBacktest } = require('./backtest')
 const { runBtcBacktest } = require('./btcBacktest')
-const { runMgpiffBacktest } = require('./mgpiffBacktest')
 const { scrapeBpibondNavpu, fetchNavpuRange: fetchBpibondNavpuRange, labelToDate: bpibondLabelToDate } = require('./bpibondScraper')
 const { analyzeSignal: analyzeBpibondSignal, computeBpibondThresholds, BPIBOND_INITIAL_THRESHOLDS } = require('./bpibondSignalEngine')
 const { runBpibondBacktest } = require('./bpibondBacktest')
-const { scrapeMreitNavpu, fetchNavpuRange: fetchMreitNavpuRange, labelToDate: mreitLabelToDate } = require('./mreitScraper')
-const { analyzeSignal: analyzeMreitSignal, computeMreitThresholds, MREIT_INITIAL_THRESHOLDS } = require('./mreitSignalEngine')
-const { runMreitBacktest } = require('./mreitBacktest')
 const { scrapeAtramNavpu } = require('./atramScraper')
 const { analyzeSignal: analyzeAtramSignal, computeAtramThresholds, ATRAM_INITIAL_THRESHOLDS } = require('./atramSignalEngine')
 const { runAtramBacktest } = require('./atramBacktest')
@@ -321,39 +315,7 @@ function nthTradingDayOfMonth(year, month, n) {
 }
 
 /**
- * Compute MGPIFF distribution dates (7th trading day of each month)
- * for a window of months centered on todayStr. Used as recordDates
- * input to analyzeSignal so divCycle detection works correctly.
- */
-function getMgpiffDistributionDates(todayStr) {
-  const dates = []
-  const now = new Date(todayStr + 'T00:00:00')
-  for (let i = -2; i <= 3; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth() + i, 1)
-    const date = nthTradingDayOfMonth(d.getFullYear(), d.getMonth(), 7)
-    if (date) dates.push(date)
-  }
-  return dates
-}
-
-/**
- * Compute MREIT distribution dates (7th trading day of each month)
- * Same pattern as MGPIFF.
- */
-function getMreitDistributionDates(todayStr) {
-  const dates = []
-  const now = new Date(todayStr + 'T00:00:00')
-  for (let i = -2; i <= 3; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth() + i, 1)
-    const date = nthTradingDayOfMonth(d.getFullYear(), d.getMonth(), 7)
-    if (date) dates.push(date)
-  }
-  return dates
-}
-
-/**
  * Compute ATRAM Nasdaq distribution dates (7th trading day of each month)
- * Same pattern as MGPIFF/MREIT — monthly dividends.
  */
 function getAtramDistributionDates(todayStr) {
   const dates = []
@@ -752,13 +714,12 @@ exports.confirmPendingBuy = onCall(
   async (request) => {
     const { buyId, actualNavpu, fund } = request.data
     if (!buyId || !actualNavpu || actualNavpu <= 0) throw new Error('Invalid buyId or actualNavpu')
-    if (!['alfm', 'mgpiff', 'bpibond', 'mreit'].includes(fund)) throw new Error('Invalid fund')
+    if (!['alfm', 'bpibond', 'atram'].includes(fund)) throw new Error('Invalid fund')
 
     const FUND_MAP = {
       alfm:    { buys: 'buys',          position: 'position' },
-      mgpiff:  { buys: 'mgpiff_buys',   position: 'mgpiff_position' },
       bpibond: { buys: 'bpibond_buys',  position: 'bpibond_position' },
-      mreit:   { buys: 'mreit_buys',    position: 'mreit_position' },
+      atram:   { buys: 'atram_buys',    position: 'atram_position' },
     }
     const { buys: buysCol, position: posCol } = FUND_MAP[fund]
 
@@ -1633,289 +1594,6 @@ exports.btcHourlySignalCheck = onSchedule(
   }
 )
 
-// ── 11. dailyMgpiffCheck ──────────────────────────────────────────────────────
-
-exports.dailyMgpiffCheck = onSchedule(
-  {
-    schedule: '0 16 * * *', // 4:00 PM Asia/Manila — same window as ALFM
-    timeZone: 'Asia/Manila',
-    memory: '256MiB',
-    timeoutSeconds: 60,
-    secrets: [gmailUser, gmailPass],
-  },
-  async () => {
-    const todayStr = getTodayPH()
-    const monthYear = getMonthPH()
-
-    console.log(`[dailyMgpiffCheck] Running for ${todayStr}`)
-
-    if (isNonTradingDay(todayStr)) {
-      const reason = isWeekend(todayStr) ? 'weekend' : 'PH public holiday'
-      console.log(`[dailyMgpiffCheck] Skipping — ${reason}`)
-      return
-    }
-
-    // 1. Scrape MGPIFF NAVPU from uitf.com.ph
-    const yesterday = offsetDate(todayStr, -1)
-    const { navpu: scrapedNavpu, effectiveDate: scrapedDate, source, error: scrapeError } = await scrapeMgpiffNavpu(yesterday)
-
-    if (scrapeError || scrapedNavpu === null) {
-      console.error('[dailyMgpiffCheck] Scraping failed:', scrapeError)
-      await db.collection('mgpiff_scrape_errors').doc(todayStr).set({
-        date: todayStr, scrapeError: scrapeError || 'Unknown', createdAt: FieldValue.serverTimestamp(),
-      })
-      return
-    }
-
-    const navpuDate = scrapedDate || yesterday
-    console.log(`[dailyMgpiffCheck] Scraped NAVPU: ${scrapedNavpu} from ${source} (date: ${navpuDate})`)
-
-    // 2. Get recent MGPIFF NAVPU history for signal analysis
-    const recentDocs = await db.collection('mgpiff_navpu_history')
-      .where('date', '<', todayStr)
-      .orderBy('date', 'desc')
-      .limit(14)
-      .get()
-    const recentNavpus = recentDocs.docs
-      .map((d) => d.data())
-      .filter((d) => !isWeekend(d.date))
-      .sort((a, b) => a.date.localeCompare(b.date))
-      .map((d) => d.navpu)
-      .filter((n) => n !== null)
-
-    const yesterdayNavpu = recentNavpus.length > 0 ? recentNavpus[recentNavpus.length - 1] : null
-    const twoDaysAgoNavpu = recentNavpus.length > 1 ? recentNavpus[recentNavpus.length - 2] : null
-    const last7Navpus = [...recentNavpus.slice(-6), scrapedNavpu]
-
-    // 3. Get MGPIFF position
-    const positionSnap = await db.collection('mgpiff_position').doc('current').get()
-    const position = positionSnap.exists ? positionSnap.data() : {}
-    const avgPrice = position.avgPrice && position.avgPrice > 0 ? position.avgPrice : null
-
-    // 4. Compute bucket state from mgpiff_buys
-    const buysSnap = await db.collection('mgpiff_buys').where('monthYear', '==', monthYear).get()
-    const monthBuys = buysSnap.docs.map((d) => d.data())
-    const dividendBuyDoneThisMonth = monthBuys.some((b) => b.isDividendBuy === true)
-    const oppBuys = monthBuys.filter((b) => !b.isDividendBuy && b.bucket !== 'extreme_override')
-    const staggerSeen = new Set()
-    let opportunityBuyCountThisMonth = 0
-    for (const buy of oppBuys) {
-      if (buy.staggerEventDate) {
-        if (!staggerSeen.has(buy.staggerEventDate)) { staggerSeen.add(buy.staggerEventDate); opportunityBuyCountThisMonth++ }
-      } else {
-        opportunityBuyCountThisMonth++
-      }
-    }
-    const oppDates = oppBuys.map((b) => b.date).sort()
-    const lastOpportunityBuyDate = oppDates.length > 0 ? oppDates[oppDates.length - 1] : null
-
-    // 5. Build MGPIFF distribution dates (7th trading day of each month)
-    const recordDates = getMgpiffDistributionDates(todayStr)
-
-    // 6. Compute dynamic thresholds from MGPIFF NAVPU history
-    const allNavpuSnap = await db.collection('mgpiff_navpu_history').orderBy('date', 'asc').get()
-    const allNavpuValues = allNavpuSnap.docs
-      .filter((d) => !isWeekend(d.data().date))
-      .map((d) => d.data().navpu)
-      .filter((v) => v != null && !isNaN(v))
-    const thresholds = computeMgpiffThresholds(allNavpuValues)
-
-    await db.collection('mgpiff_config').doc('thresholds').set(thresholds)
-
-    // 7. Run signal analysis
-    const signal = analyzeMgpiffSignal({
-      todayNavpu: scrapedNavpu,
-      yesterdayNavpu,
-      twoDaysAgoNavpu,
-      last7Navpus,
-      avgPrice,
-      dividendBuyDoneThisMonth,
-      opportunityBuyCountThisMonth,
-      lastOpportunityBuyDate,
-      todayStr,
-      recordDates,
-      thresholds,
-    })
-
-    console.log(`[dailyMgpiffCheck] Signal: ${signal.signal} amount=${signal.amount}`)
-
-    // 8. Store NAVPU
-    await db.collection('mgpiff_navpu_history').doc(navpuDate).set({
-      date: navpuDate,
-      navpu: scrapedNavpu,
-      source,
-      dailyChange: signal.dailyChange,
-      createdAt: FieldValue.serverTimestamp(),
-    })
-
-    // 9. Store signal
-    await db.collection('mgpiff_signals').doc(todayStr).set({
-      ...signal,
-      navpu: scrapedNavpu,
-      monthYear,
-      createdAt: FieldValue.serverTimestamp(),
-    })
-
-    // 10. Update MGPIFF position market value
-    if (position.units && position.units > 0) {
-      const marketValue = position.units * scrapedNavpu
-      const unrealizedGain = marketValue - (position.totalCost || 0)
-      const unrealizedGainPct = position.totalCost > 0
-        ? parseFloat(((unrealizedGain / position.totalCost) * 100).toFixed(4)) : 0
-      await db.collection('mgpiff_position').doc('current').update({
-        marketValue: parseFloat(marketValue.toFixed(2)),
-        unrealizedGain: parseFloat(unrealizedGain.toFixed(2)),
-        unrealizedGainPct,
-        updatedAt: FieldValue.serverTimestamp(),
-      })
-    }
-
-    // 11. Send email
-    try {
-      const user = gmailUser.value()
-      const pass = gmailPass.value()
-      if (user && pass) {
-        await sendMgpiffSignalEmail(signal, todayStr, user, pass)
-        console.log('[dailyMgpiffCheck] Email sent.')
-      }
-    } catch (emailErr) {
-      console.error('[dailyMgpiffCheck] Email error (non-fatal):', emailErr.message)
-    }
-
-    console.log('[dailyMgpiffCheck] Done.')
-  }
-)
-
-// ── 12. recordMgpiffBuy ───────────────────────────────────────────────────────
-
-exports.recordMgpiffBuy = onCall(
-  { region: 'us-central1', cors: true },
-  async (request) => {
-    const {
-      amount,
-      navpu,
-      unitsOverride = null,
-      isDividendBuy = false,
-      bucket = null,
-      isPending = false,
-      staggerEventDate = null,
-      date: dateOverride = null,
-    } = request.data
-
-    if (!amount || !navpu || amount <= 0 || navpu <= 0) throw new Error('Invalid amount or navpu')
-
-    const todayStr = dateOverride || getTodayPH()
-    const monthYear = todayStr.substring(0, 7)
-
-    const positionSnap = await db.collection('mgpiff_position').doc('current').get()
-    const position = positionSnap.exists
-      ? positionSnap.data()
-      : { units: 0, avgPrice: 0, totalCost: 0 }
-
-    const currentUnits = position.units || 0
-    const currentCost = position.totalCost || 0
-    const unitsBought = unitsOverride != null ? unitsOverride : amount / navpu
-    const newTotalUnits = currentUnits + unitsBought
-    const newTotalCost = currentCost + amount
-    const newAvgPrice = newTotalUnits > 0 ? newTotalCost / newTotalUnits : 0
-    const newMarketValue = newTotalUnits * navpu
-    const newUnrealizedGain = newMarketValue - newTotalCost
-    const newUnrealizedGainPct = newTotalCost > 0 ? (newUnrealizedGain / newTotalCost) * 100 : 0
-
-    const buyRef = await db.collection('mgpiff_buys').add({
-      date: todayStr,
-      amount: parseFloat(amount.toFixed(2)),
-      navpu: parseFloat(parseFloat(navpu).toFixed(4)),
-      unitsBought: parseFloat(unitsBought.toFixed(4)),
-      newAvgPrice: parseFloat(newAvgPrice.toFixed(4)),
-      totalUnitsAfter: parseFloat(newTotalUnits.toFixed(4)),
-      totalCostAfter: parseFloat(newTotalCost.toFixed(2)),
-      monthYear,
-      staggerEventDate: staggerEventDate || null,
-      isDividendBuy: isDividendBuy || false,
-      bucket: bucket || null,
-      isPending: isPending || false,
-      createdAt: FieldValue.serverTimestamp(),
-    })
-
-    await db.collection('mgpiff_position').doc('current').set({
-      units: parseFloat(newTotalUnits.toFixed(4)),
-      avgPrice: parseFloat(newAvgPrice.toFixed(4)),
-      totalCost: parseFloat(newTotalCost.toFixed(2)),
-      marketValue: parseFloat(newMarketValue.toFixed(2)),
-      unrealizedGain: parseFloat(newUnrealizedGain.toFixed(2)),
-      unrealizedGainPct: parseFloat(newUnrealizedGainPct.toFixed(4)),
-      updatedAt: FieldValue.serverTimestamp(),
-    }, { merge: true })
-
-    console.log(`[recordMgpiffBuy] ₱${amount} @ ₱${navpu} = ${unitsBought.toFixed(4)} units`)
-    return { success: true, buyId: buyRef.id }
-  }
-)
-
-// ── 12b. recalcMgpiffPosition ────────────────────────────────────────────────
-// Rebuild mgpiff_position/current from all mgpiff_buys documents.
-// Call after manually deleting a duplicate buy from Firestore.
-
-exports.recalcMgpiffPosition = onRequest(
-  { region: 'us-central1', timeoutSeconds: 60 },
-  async (req, res) => {
-    const buysSnap = await db.collection('mgpiff_buys').orderBy('createdAt', 'asc').get()
-    if (buysSnap.empty) {
-      await db.collection('mgpiff_position').doc('current').set({
-        units: 0, avgPrice: 0, totalCost: 0,
-        marketValue: 0, unrealizedGain: 0, unrealizedGainPct: 0,
-        updatedAt: FieldValue.serverTimestamp(),
-      })
-      return res.status(200).json({ message: 'No buys found — position reset to zero.' })
-    }
-
-    let totalUnits = 0
-    let totalCost = 0
-
-    const batch = db.batch()
-    for (const doc of buysSnap.docs) {
-      const buy = doc.data()
-      const unitsBought = buy.unitsBought || (buy.amount / buy.navpu)
-      totalUnits += unitsBought
-      totalCost += buy.amount
-
-      const newAvgPrice = totalUnits > 0 ? totalCost / totalUnits : 0
-      batch.update(doc.ref, {
-        totalUnitsAfter: parseFloat(totalUnits.toFixed(4)),
-        totalCostAfter: parseFloat(totalCost.toFixed(2)),
-        newAvgPrice: parseFloat(newAvgPrice.toFixed(4)),
-      })
-    }
-    await batch.commit()
-
-    const latestNavpu = buysSnap.docs[buysSnap.docs.length - 1].data().navpu
-    const avgPrice = totalUnits > 0 ? totalCost / totalUnits : 0
-    const marketValue = totalUnits * latestNavpu
-    const unrealizedGain = marketValue - totalCost
-    const unrealizedGainPct = totalCost > 0 ? (unrealizedGain / totalCost) * 100 : 0
-
-    await db.collection('mgpiff_position').doc('current').set({
-      units: parseFloat(totalUnits.toFixed(4)),
-      avgPrice: parseFloat(avgPrice.toFixed(4)),
-      totalCost: parseFloat(totalCost.toFixed(2)),
-      marketValue: parseFloat(marketValue.toFixed(2)),
-      unrealizedGain: parseFloat(unrealizedGain.toFixed(2)),
-      unrealizedGainPct: parseFloat(unrealizedGainPct.toFixed(4)),
-      updatedAt: FieldValue.serverTimestamp(),
-    })
-
-    console.log(`[recalcMgpiffPosition] Rebuilt from ${buysSnap.size} buys: ${totalUnits.toFixed(4)} units, ₱${totalCost.toFixed(2)} cost`)
-    res.status(200).json({
-      message: 'Position recalculated',
-      buysCount: buysSnap.size,
-      units: parseFloat(totalUnits.toFixed(4)),
-      totalCost: parseFloat(totalCost.toFixed(2)),
-      avgPrice: parseFloat(avgPrice.toFixed(4)),
-    })
-  }
-)
-
 // ── 12c. recalcAlfmPosition ─────────────────────────────────────────────────
 
 exports.recalcAlfmPosition = onRequest(
@@ -2045,181 +1723,6 @@ exports.recalcBpibondPosition = onRequest(
       totalCost: parseFloat(totalCost.toFixed(2)),
       avgPrice: parseFloat(avgPrice.toFixed(4)),
     })
-  }
-)
-
-// ── 13. seedMgpiffData ────────────────────────────────────────────────────────
-
-exports.seedMgpiffData = onRequest(
-  { region: 'us-central1', timeoutSeconds: 120, memory: '256MiB' },
-  async (req, res) => {
-    if (req.method !== 'POST' && req.method !== 'GET') { res.status(405).send('Method not allowed'); return }
-
-    console.log('[seedMgpiffData] Starting...')
-    const results = { positionSeeded: false, dividendsSeeded: 0, skipped: 0 }
-
-    // Seed empty position
-    const posSnap = await db.collection('mgpiff_position').doc('current').get()
-    if (!posSnap.exists) {
-      await db.collection('mgpiff_position').doc('current').set({
-        units: 0, avgPrice: 0, totalCost: 0,
-        marketValue: 0, unrealizedGain: 0, unrealizedGainPct: 0,
-        updatedAt: FieldValue.serverTimestamp(),
-      })
-      results.positionSeeded = true
-    }
-
-    // Seed 12 months of confirmed MGPIFF distribution history
-    // Data from Manulife's income-paying funds page (USD class distribution dates;
-    // PHP class shares the same dates). unitIncome is the ratio (multiply by NAVPU × units).
-    const MGPIFF_DISTRIBUTION_HISTORY = [
-      { date: '2025-04-11', paymentDate: '2025-04-23', month: 'Apr 2025', unitIncome: 0.0048 },
-      { date: '2025-05-13', paymentDate: '2025-05-21', month: 'May 2025', unitIncome: 0.0049 },
-      { date: '2025-06-11', paymentDate: '2025-06-20', month: 'Jun 2025', unitIncome: 0.0046 },
-      { date: '2025-07-09', paymentDate: '2025-07-17', month: 'Jul 2025', unitIncome: 0.0045 },
-      { date: '2025-08-11', paymentDate: '2025-08-19', month: 'Aug 2025', unitIncome: 0.0044 },
-      { date: '2025-09-09', paymentDate: '2025-09-17', month: 'Sep 2025', unitIncome: 0.0044 },
-      { date: '2025-10-09', paymentDate: '2025-10-17', month: 'Oct 2025', unitIncome: 0.0042 },
-      { date: '2025-11-11', paymentDate: '2025-11-19', month: 'Nov 2025', unitIncome: 0.0041 },
-      { date: '2025-12-10', paymentDate: '2025-12-18', month: 'Dec 2025', unitIncome: 0.0044 },
-      { date: '2026-01-12', paymentDate: '2026-01-20', month: 'Jan 2026', unitIncome: 0.0045 },
-      { date: '2026-02-10', paymentDate: '2026-02-19', month: 'Feb 2026', unitIncome: 0.0045 },
-      { date: '2026-03-10', paymentDate: '2026-03-18', month: 'Mar 2026', unitIncome: 0.0046 },
-    ]
-
-    const batch = db.batch()
-    for (const r of MGPIFF_DISTRIBUTION_HISTORY) {
-      const ref = db.collection('mgpiff_dividends').doc(r.date)
-      const existing = await ref.get()
-      if (existing.exists) { results.skipped++; continue }
-      batch.set(ref, { ...r, confirmed: false, earned: null, units: null, autoDetected: false })
-      results.dividendsSeeded++
-    }
-    await batch.commit()
-
-    console.log('[seedMgpiffData] Done.', results)
-    res.status(200).json({ message: 'MGPIFF seed complete', ...results })
-  }
-)
-
-// ── 14. seedMgpiffNavpu ───────────────────────────────────────────────────────
-// Fetches MGPIFF NAVPU history directly from uitf.com.ph JSON API and seeds Firestore.
-// Safe to re-run — skips existing docs.
-// Usage: GET https://.../seedMgpiffNavpu?from=2019-03-25&to=2026-05-22
-
-const { fetchNavpuRange, labelToDate: uitfLabelToDate } = require('./mgpiffScraper')
-
-exports.seedMgpiffNavpu = onRequest(
-  { region: 'us-central1', timeoutSeconds: 540, memory: '512MiB' },
-  async (req, res) => {
-    if (req.method !== 'GET' && req.method !== 'POST') { res.status(405).send('GET or POST only'); return }
-
-    const fromDate = req.query.from || '2019-03-25' // fund inception date
-    const toDate   = req.query.to   || getTodayPH()
-
-    console.log(`[seedMgpiffNavpu] Fetching ${fromDate} → ${toDate}`)
-
-    let rawPoints
-    try {
-      rawPoints = await fetchNavpuRange(fromDate, toDate)
-    } catch (err) {
-      res.status(500).json({ error: `uitf.com.ph fetch failed: ${err.message}` })
-      return
-    }
-
-    if (!rawPoints.length) {
-      res.status(200).json({ message: 'No data returned from uitf.com.ph', written: 0, skipped: 0 })
-      return
-    }
-
-    // Parse + sort chronologically
-    const parsed = rawPoints
-      .map((p) => ({ date: uitfLabelToDate(p.label), navpu: parseFloat(p.y) }))
-      .filter((p) => p.date && !isNaN(p.navpu) && p.navpu >= 40 && p.navpu <= 70)
-      .sort((a, b) => a.date.localeCompare(b.date))
-
-    let written = 0, skipped = 0
-    const BATCH_SIZE = 400
-
-    for (let i = 0; i < parsed.length; i += BATCH_SIZE) {
-      const batch = db.batch()
-      const chunk = parsed.slice(i, i + BATCH_SIZE)
-      for (let j = 0; j < chunk.length; j++) {
-        const { date, navpu } = chunk[j]
-        const ref = db.collection('mgpiff_navpu_history').doc(date)
-        const existing = await ref.get()
-        if (existing.exists) { skipped++; continue }
-        const prevNavpu = j > 0 ? chunk[j - 1].navpu : (i > 0 ? parsed[i - 1].navpu : null)
-        const dailyChange = prevNavpu !== null ? parseFloat((navpu - prevNavpu).toFixed(4)) : 0
-        batch.set(ref, {
-          date, navpu, dailyChange,
-          source: 'uitf.com.ph',
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        })
-        written++
-      }
-      await batch.commit()
-      console.log(`[seedMgpiffNavpu] Progress: ${i + chunk.length}/${parsed.length}`)
-    }
-
-    console.log(`[seedMgpiffNavpu] Done — written=${written} skipped=${skipped}`)
-    res.status(200).json({ message: 'MGPIFF NAVPU seed complete', written, skipped, total: parsed.length, range: `${fromDate} → ${toDate}` })
-  }
-)
-
-// ── 15. runMgpiffBacktest (HTTP, manual trigger) ──────────────────────────────
-
-exports.runMgpiffBacktest = onRequest(
-  { region: 'us-central1', timeoutSeconds: 540, memory: '512MiB' },
-  async (req, res) => {
-    if (req.method !== 'POST' && req.method !== 'GET') { res.status(405).send('Method not allowed'); return }
-    console.log('[runMgpiffBacktest] Starting...')
-    try {
-      const { results, summary } = await runMgpiffBacktest(db)
-      await db.collection('mgpiff_config').doc('backtest_summary').set(summary)
-      const batchSize = 400
-      for (let i = 0; i < results.length; i += batchSize) {
-        const batch = db.batch()
-        for (const r of results.slice(i, i + batchSize)) {
-          batch.set(db.collection('mgpiff_backtest_results').doc(r.date), r)
-        }
-        await batch.commit()
-      }
-      console.log('[runMgpiffBacktest] Done.', summary)
-      res.status(200).json({ message: 'MGPIFF backtest complete', summary })
-    } catch (err) {
-      console.error('[runMgpiffBacktest] Error:', err)
-      res.status(500).json({ error: err.message })
-    }
-  }
-)
-
-// ── 16. scheduledMgpiffBacktest ───────────────────────────────────────────────
-
-exports.scheduledMgpiffBacktest = onSchedule(
-  {
-    schedule: '0 11 1,15 * *', // 11:00 AM Manila on 1st and 15th
-    timeZone: 'Asia/Manila',
-    timeoutSeconds: 540,
-    memory: '512MiB',
-  },
-  async () => {
-    console.log('[scheduledMgpiffBacktest] Starting...')
-    try {
-      const { results, summary } = await runMgpiffBacktest(db)
-      await db.collection('mgpiff_config').doc('backtest_summary').set(summary)
-      const batchSize = 400
-      for (let i = 0; i < results.length; i += batchSize) {
-        const batch = db.batch()
-        for (const r of results.slice(i, i + batchSize)) {
-          batch.set(db.collection('mgpiff_backtest_results').doc(r.date), r)
-        }
-        await batch.commit()
-      }
-      console.log('[scheduledMgpiffBacktest] Done.', summary.totalDays, 'days processed')
-    } catch (err) {
-      console.error('[scheduledMgpiffBacktest] Error:', err)
-    }
   }
 )
 
@@ -2583,415 +2086,6 @@ exports.scheduledBpibondBacktest = onSchedule(
   }
 )
 
-// ── 23. dailyMreitCheck ─────────────────────────────────────────────────────
-
-exports.dailyMreitCheck = onSchedule(
-  {
-    schedule: '0 16 * * *',
-    timeZone: 'Asia/Manila',
-    memory: '256MiB',
-    timeoutSeconds: 60,
-    secrets: [gmailUser, gmailPass],
-  },
-  async () => {
-    const todayStr = getTodayPH()
-    const monthYear = getMonthPH()
-
-    console.log(`[dailyMreitCheck] Running for ${todayStr}`)
-
-    if (isNonTradingDay(todayStr)) {
-      const reason = isWeekend(todayStr) ? 'weekend' : 'PH public holiday'
-      console.log(`[dailyMreitCheck] Skipping — ${reason}`)
-      return
-    }
-
-    const yesterday = offsetDate(todayStr, -1)
-    const { navpu: scrapedNavpu, effectiveDate: scrapedDate, source, error: scrapeError } = await scrapeMreitNavpu(yesterday)
-
-    if (scrapeError || scrapedNavpu === null) {
-      console.error('[dailyMreitCheck] Scraping failed:', scrapeError)
-      await db.collection('mreit_scrape_errors').doc(todayStr).set({
-        date: todayStr, scrapeError: scrapeError || 'Unknown', createdAt: FieldValue.serverTimestamp(),
-      })
-      return
-    }
-
-    const navpuDate = scrapedDate || yesterday
-    console.log(`[dailyMreitCheck] Scraped NAVPU: ${scrapedNavpu} from ${source} (date: ${navpuDate})`)
-
-    const recentDocs = await db.collection('mreit_navpu_history')
-      .where('date', '<', todayStr)
-      .orderBy('date', 'desc')
-      .limit(14)
-      .get()
-    const recentNavpus = recentDocs.docs
-      .map((d) => d.data())
-      .filter((d) => !isWeekend(d.date))
-      .sort((a, b) => a.date.localeCompare(b.date))
-      .map((d) => d.navpu)
-      .filter((n) => n !== null)
-
-    const yesterdayNavpu = recentNavpus.length > 0 ? recentNavpus[recentNavpus.length - 1] : null
-    const twoDaysAgoNavpu = recentNavpus.length > 1 ? recentNavpus[recentNavpus.length - 2] : null
-    const last7Navpus = [...recentNavpus.slice(-6), scrapedNavpu]
-
-    const positionSnap = await db.collection('mreit_position').doc('current').get()
-    const position = positionSnap.exists ? positionSnap.data() : {}
-    const avgPrice = position.avgPrice && position.avgPrice > 0 ? position.avgPrice : null
-
-    const buysSnap = await db.collection('mreit_buys').where('monthYear', '==', monthYear).get()
-    const monthBuys = buysSnap.docs.map((d) => d.data())
-    const dividendBuyDoneThisMonth = monthBuys.some((b) => b.isDividendBuy === true)
-    const oppBuys = monthBuys.filter((b) => !b.isDividendBuy && b.bucket !== 'extreme_override')
-    const staggerSeen = new Set()
-    let opportunityBuyCountThisMonth = 0
-    for (const buy of oppBuys) {
-      if (buy.staggerEventDate) {
-        if (!staggerSeen.has(buy.staggerEventDate)) { staggerSeen.add(buy.staggerEventDate); opportunityBuyCountThisMonth++ }
-      } else {
-        opportunityBuyCountThisMonth++
-      }
-    }
-    const oppDates = oppBuys.map((b) => b.date).sort()
-    const lastOpportunityBuyDate = oppDates.length > 0 ? oppDates[oppDates.length - 1] : null
-
-    const recordDates = getMreitDistributionDates(todayStr)
-
-    const allNavpuSnap = await db.collection('mreit_navpu_history').orderBy('date', 'asc').get()
-    const allNavpuValues = allNavpuSnap.docs
-      .filter((d) => !isWeekend(d.data().date))
-      .map((d) => d.data().navpu)
-      .filter((v) => v != null && !isNaN(v))
-    const thresholds = computeMreitThresholds(allNavpuValues)
-
-    await db.collection('mreit_config').doc('thresholds').set(thresholds)
-
-    const signal = analyzeMreitSignal({
-      todayNavpu: scrapedNavpu,
-      yesterdayNavpu,
-      twoDaysAgoNavpu,
-      last7Navpus,
-      avgPrice,
-      dividendBuyDoneThisMonth,
-      opportunityBuyCountThisMonth,
-      lastOpportunityBuyDate,
-      todayStr,
-      recordDates,
-      thresholds,
-    })
-
-    console.log(`[dailyMreitCheck] Signal: ${signal.signal} amount=${signal.amount}`)
-
-    await db.collection('mreit_navpu_history').doc(navpuDate).set({
-      date: navpuDate,
-      navpu: scrapedNavpu,
-      source,
-      dailyChange: signal.dailyChange,
-      createdAt: FieldValue.serverTimestamp(),
-    })
-
-    await db.collection('mreit_signals').doc(todayStr).set({
-      ...signal,
-      navpu: scrapedNavpu,
-      monthYear,
-      createdAt: FieldValue.serverTimestamp(),
-    })
-
-    if (position.units && position.units > 0) {
-      const marketValue = position.units * scrapedNavpu
-      const unrealizedGain = marketValue - (position.totalCost || 0)
-      const unrealizedGainPct = position.totalCost > 0
-        ? parseFloat(((unrealizedGain / position.totalCost) * 100).toFixed(4)) : 0
-      await db.collection('mreit_position').doc('current').update({
-        marketValue: parseFloat(marketValue.toFixed(2)),
-        unrealizedGain: parseFloat(unrealizedGain.toFixed(2)),
-        unrealizedGainPct,
-        updatedAt: FieldValue.serverTimestamp(),
-      })
-    }
-
-    try {
-      const user = gmailUser.value()
-      const pass = gmailPass.value()
-      if (user && pass) {
-        await sendMreitSignalEmail(signal, todayStr, user, pass)
-        console.log('[dailyMreitCheck] Email sent.')
-      }
-    } catch (emailErr) {
-      console.error('[dailyMreitCheck] Email error (non-fatal):', emailErr.message)
-    }
-
-    console.log('[dailyMreitCheck] Done.')
-  }
-)
-
-// ── 24. recordMreitBuy ──────────────────────────────────────────────────────
-
-exports.recordMreitBuy = onCall(
-  { region: 'us-central1', cors: true },
-  async (request) => {
-    const {
-      amount,
-      navpu,
-      unitsOverride = null,
-      isDividendBuy = false,
-      bucket = null,
-      isPending = false,
-      staggerEventDate = null,
-      date: dateOverride = null,
-    } = request.data
-
-    if (!amount || !navpu || amount <= 0 || navpu <= 0) throw new Error('Invalid amount or navpu')
-
-    const todayStr = dateOverride || getTodayPH()
-    const monthYear = todayStr.substring(0, 7)
-
-    const positionSnap = await db.collection('mreit_position').doc('current').get()
-    const position = positionSnap.exists
-      ? positionSnap.data()
-      : { units: 0, avgPrice: 0, totalCost: 0 }
-
-    const currentUnits = position.units || 0
-    const currentCost = position.totalCost || 0
-    const unitsBought = unitsOverride != null ? unitsOverride : amount / navpu
-    const newTotalUnits = currentUnits + unitsBought
-    const newTotalCost = currentCost + amount
-    const newAvgPrice = newTotalUnits > 0 ? newTotalCost / newTotalUnits : 0
-    const newMarketValue = newTotalUnits * navpu
-    const newUnrealizedGain = newMarketValue - newTotalCost
-    const newUnrealizedGainPct = newTotalCost > 0 ? (newUnrealizedGain / newTotalCost) * 100 : 0
-
-    const buyRef = await db.collection('mreit_buys').add({
-      date: todayStr,
-      amount: parseFloat(amount.toFixed(2)),
-      navpu: parseFloat(parseFloat(navpu).toFixed(4)),
-      unitsBought: parseFloat(unitsBought.toFixed(4)),
-      newAvgPrice: parseFloat(newAvgPrice.toFixed(4)),
-      totalUnitsAfter: parseFloat(newTotalUnits.toFixed(4)),
-      totalCostAfter: parseFloat(newTotalCost.toFixed(2)),
-      monthYear,
-      staggerEventDate: staggerEventDate || null,
-      isDividendBuy: isDividendBuy || false,
-      bucket: bucket || null,
-      isPending: isPending || false,
-      createdAt: FieldValue.serverTimestamp(),
-    })
-
-    await db.collection('mreit_position').doc('current').set({
-      units: parseFloat(newTotalUnits.toFixed(4)),
-      avgPrice: parseFloat(newAvgPrice.toFixed(4)),
-      totalCost: parseFloat(newTotalCost.toFixed(2)),
-      marketValue: parseFloat(newMarketValue.toFixed(2)),
-      unrealizedGain: parseFloat(newUnrealizedGain.toFixed(2)),
-      unrealizedGainPct: parseFloat(newUnrealizedGainPct.toFixed(4)),
-      updatedAt: FieldValue.serverTimestamp(),
-    }, { merge: true })
-
-    console.log(`[recordMreitBuy] ₱${amount} @ ₱${navpu} = ${unitsBought.toFixed(4)} units`)
-    return { success: true, buyId: buyRef.id }
-  }
-)
-
-// ── 24b. recalcMreitPosition ────────────────────────────────────────────────
-
-exports.recalcMreitPosition = onRequest(
-  { region: 'us-central1', timeoutSeconds: 60 },
-  async (req, res) => {
-    const buysSnap = await db.collection('mreit_buys').orderBy('createdAt', 'asc').get()
-    if (buysSnap.empty) {
-      await db.collection('mreit_position').doc('current').set({
-        units: 0, avgPrice: 0, totalCost: 0,
-        marketValue: 0, unrealizedGain: 0, unrealizedGainPct: 0,
-        updatedAt: FieldValue.serverTimestamp(),
-      })
-      return res.status(200).json({ message: 'No buys found — position reset to zero.' })
-    }
-
-    let totalUnits = 0
-    let totalCost = 0
-
-    const batch = db.batch()
-    for (const doc of buysSnap.docs) {
-      const buy = doc.data()
-      const unitsBought = buy.unitsBought || (buy.amount / buy.navpu)
-      totalUnits += unitsBought
-      totalCost += buy.amount
-
-      const newAvgPrice = totalUnits > 0 ? totalCost / totalUnits : 0
-      batch.update(doc.ref, {
-        totalUnitsAfter: parseFloat(totalUnits.toFixed(4)),
-        totalCostAfter: parseFloat(totalCost.toFixed(2)),
-        newAvgPrice: parseFloat(newAvgPrice.toFixed(4)),
-      })
-    }
-    await batch.commit()
-
-    const latestNavpu = buysSnap.docs[buysSnap.docs.length - 1].data().navpu
-    const avgPrice = totalUnits > 0 ? totalCost / totalUnits : 0
-    const marketValue = totalUnits * latestNavpu
-    const unrealizedGain = marketValue - totalCost
-    const unrealizedGainPct = totalCost > 0 ? (unrealizedGain / totalCost) * 100 : 0
-
-    await db.collection('mreit_position').doc('current').set({
-      units: parseFloat(totalUnits.toFixed(4)),
-      avgPrice: parseFloat(avgPrice.toFixed(4)),
-      totalCost: parseFloat(totalCost.toFixed(2)),
-      marketValue: parseFloat(marketValue.toFixed(2)),
-      unrealizedGain: parseFloat(unrealizedGain.toFixed(2)),
-      unrealizedGainPct: parseFloat(unrealizedGainPct.toFixed(4)),
-      updatedAt: FieldValue.serverTimestamp(),
-    })
-
-    console.log(`[recalcMreitPosition] Rebuilt from ${buysSnap.size} buys: ${totalUnits.toFixed(4)} units, ₱${totalCost.toFixed(2)} cost`)
-    res.status(200).json({
-      message: 'Position recalculated',
-      buysCount: buysSnap.size,
-      units: parseFloat(totalUnits.toFixed(4)),
-      totalCost: parseFloat(totalCost.toFixed(2)),
-      avgPrice: parseFloat(avgPrice.toFixed(4)),
-    })
-  }
-)
-
-// ── 25. seedMreitData ───────────────────────────────────────────────────────
-
-exports.seedMreitData = onRequest(
-  { region: 'us-central1', timeoutSeconds: 120, memory: '256MiB' },
-  async (req, res) => {
-    if (req.method !== 'POST' && req.method !== 'GET') { res.status(405).send('Method not allowed'); return }
-
-    console.log('[seedMreitData] Starting...')
-    const results = { positionSeeded: false }
-
-    const posSnap = await db.collection('mreit_position').doc('current').get()
-    if (!posSnap.exists) {
-      await db.collection('mreit_position').doc('current').set({
-        units: 0, avgPrice: 0, totalCost: 0,
-        marketValue: 0, unrealizedGain: 0, unrealizedGainPct: 0,
-        updatedAt: FieldValue.serverTimestamp(),
-      })
-      results.positionSeeded = true
-    }
-
-    console.log('[seedMreitData] Done.', results)
-    res.status(200).json({ message: 'MREIT seed complete', ...results })
-  }
-)
-
-// ── 26. seedMreitNavpu ──────────────────────────────────────────────────────
-
-exports.seedMreitNavpu = onRequest(
-  { region: 'us-central1', timeoutSeconds: 540, memory: '512MiB' },
-  async (req, res) => {
-    if (req.method !== 'GET' && req.method !== 'POST') { res.status(405).send('GET or POST only'); return }
-
-    const fromDate = req.query.from || '2023-01-01'
-    const toDate   = req.query.to   || getTodayPH()
-
-    console.log(`[seedMreitNavpu] Fetching ${fromDate} → ${toDate}`)
-
-    let rawPoints
-    try {
-      rawPoints = await fetchMreitNavpuRange(fromDate, toDate)
-    } catch (err) {
-      res.status(500).json({ error: `uitf.com.ph fetch failed: ${err.message}` })
-      return
-    }
-
-    if (!rawPoints.length) {
-      res.status(200).json({ message: 'No data returned from uitf.com.ph', written: 0, skipped: 0 })
-      return
-    }
-
-    const parsed = rawPoints
-      .map((p) => ({ date: mreitLabelToDate(p.label), navpu: parseFloat(p.y) }))
-      .filter((p) => p.date && !isNaN(p.navpu) && p.navpu >= 30 && p.navpu <= 80)
-      .sort((a, b) => a.date.localeCompare(b.date))
-
-    let written = 0, skipped = 0
-    const BATCH_SIZE = 400
-
-    for (let i = 0; i < parsed.length; i += BATCH_SIZE) {
-      const batch = db.batch()
-      const chunk = parsed.slice(i, i + BATCH_SIZE)
-      for (let j = 0; j < chunk.length; j++) {
-        const { date, navpu } = chunk[j]
-        const ref = db.collection('mreit_navpu_history').doc(date)
-        const existing = await ref.get()
-        if (existing.exists) { skipped++; continue }
-        const prevNavpu = j > 0 ? chunk[j - 1].navpu : (i > 0 ? parsed[i - 1].navpu : null)
-        const dailyChange = prevNavpu !== null ? parseFloat((navpu - prevNavpu).toFixed(4)) : 0
-        batch.set(ref, {
-          date, navpu, dailyChange,
-          source: 'uitf.com.ph',
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        })
-        written++
-      }
-      await batch.commit()
-      console.log(`[seedMreitNavpu] Progress: ${i + chunk.length}/${parsed.length}`)
-    }
-
-    console.log(`[seedMreitNavpu] Done — written=${written} skipped=${skipped}`)
-    res.status(200).json({ message: 'MREIT NAVPU seed complete', written, skipped, total: parsed.length, range: `${fromDate} → ${toDate}` })
-  }
-)
-
-// ── 27. runMreitBacktest (HTTP, manual trigger) ─────────────────────────────
-
-exports.runMreitBacktest = onRequest(
-  { region: 'us-central1', timeoutSeconds: 540, memory: '512MiB' },
-  async (req, res) => {
-    if (req.method !== 'POST' && req.method !== 'GET') { res.status(405).send('Method not allowed'); return }
-    console.log('[runMreitBacktest] Starting...')
-    try {
-      const { results, summary } = await runMreitBacktest(db)
-      await db.collection('mreit_config').doc('backtest_summary').set(summary)
-      const batchSize = 400
-      for (let i = 0; i < results.length; i += batchSize) {
-        const batch = db.batch()
-        for (const r of results.slice(i, i + batchSize)) {
-          batch.set(db.collection('mreit_backtest_results').doc(r.date), r)
-        }
-        await batch.commit()
-      }
-      console.log('[runMreitBacktest] Done.', summary)
-      res.status(200).json({ message: 'MREIT backtest complete', summary })
-    } catch (err) {
-      console.error('[runMreitBacktest] Error:', err)
-      res.status(500).json({ error: err.message })
-    }
-  }
-)
-
-// ── 28. scheduledMreitBacktest ──────────────────────────────────────────────
-
-exports.scheduledMreitBacktest = onSchedule(
-  {
-    schedule: '0 11 1,15 * *',
-    timeZone: 'Asia/Manila',
-    timeoutSeconds: 540,
-    memory: '512MiB',
-  },
-  async () => {
-    console.log('[scheduledMreitBacktest] Starting...')
-    try {
-      const { results, summary } = await runMreitBacktest(db)
-      await db.collection('mreit_config').doc('backtest_summary').set(summary)
-      const batchSize = 400
-      for (let i = 0; i < results.length; i += batchSize) {
-        const batch = db.batch()
-        for (const r of results.slice(i, i + batchSize)) {
-          batch.set(db.collection('mreit_backtest_results').doc(r.date), r)
-        }
-        await batch.commit()
-      }
-      console.log('[scheduledMreitBacktest] Done.', summary.totalDays, 'days processed')
-    } catch (err) {
-      console.error('[scheduledMreitBacktest] Error:', err)
-    }
-  }
-)
 
 // ══════════════════════════════════════════════════════════════════════════════
 // ATRAM NASDAQ EQUITY INCOME FEEDER FUND
@@ -3340,9 +2434,48 @@ exports.seedAtramNavpu = onRequest(
       return res.status(200).json({ message: 'ATRAM NAVPU seed complete', written, skipped, total: parsed.length })
     }
 
-    res.status(200).json({
-      message: 'ATRAM NAVPU seed — no automated source. POST { entries: [{ date, navpu }, ...] } to seed manually.',
-    })
+    // GET — auto-fetch full history from uitf.com.ph
+    const { fetchNavpuRange, labelToDate } = require('./atramScraper')
+    const fromDate = req.query.from || '2026-02-01'
+    const toDate = req.query.to || getTodayPH()
+    console.log(`[seedAtramNavpu] Auto-fetching from uitf.com.ph: ${fromDate} → ${toDate}`)
+
+    const points = await fetchNavpuRange(fromDate, toDate)
+    if (!points.length) {
+      return res.status(200).json({ message: 'No data returned from uitf.com.ph', fromDate, toDate })
+    }
+
+    const entries = points
+      .map((p) => ({ date: labelToDate(p.label), navpu: parseFloat(p.y) }))
+      .filter((e) => e.date && !isNaN(e.navpu) && e.navpu >= 50 && e.navpu <= 200)
+      .sort((a, b) => a.date.localeCompare(b.date))
+
+    let written = 0, skipped = 0
+    const BATCH_SIZE = 400
+
+    for (let i = 0; i < entries.length; i += BATCH_SIZE) {
+      const batch = db.batch()
+      const chunk = entries.slice(i, i + BATCH_SIZE)
+      for (let j = 0; j < chunk.length; j++) {
+        const { date, navpu } = chunk[j]
+        const ref = db.collection('atram_navpu_history').doc(date)
+        const existing = await ref.get()
+        if (existing.exists) { skipped++; continue }
+        const prevNavpu = j > 0 ? chunk[j - 1].navpu : (i > 0 ? entries[i - 1].navpu : null)
+        const dailyChange = prevNavpu !== null ? parseFloat((navpu - prevNavpu).toFixed(4)) : 0
+        batch.set(ref, {
+          date, navpu, dailyChange,
+          source: 'uitf.com.ph',
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        })
+        written++
+      }
+      await batch.commit()
+      console.log(`[seedAtramNavpu] Progress: ${i + chunk.length}/${entries.length}`)
+    }
+
+    console.log(`[seedAtramNavpu] Done — written=${written} skipped=${skipped}`)
+    res.status(200).json({ message: 'ATRAM NAVPU seed complete', written, skipped, total: entries.length, fromDate, toDate })
   }
 )
 

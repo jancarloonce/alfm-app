@@ -26,12 +26,8 @@ import BtcSellModal from './components/BtcSellModal'
 import BtcBuyLog from './components/BtcBuyLog'
 import BtcSellLog from './components/BtcSellLog'
 import BtcPriceChart from './components/BtcPriceChart'
-import MgpiffDividendCard from './components/MgpiffDividendCard'
-import MgpiffBuyModal from './components/MgpiffBuyModal'
 import BpibondDividendCard from './components/BpibondDividendCard'
 import BpibondBuyModal from './components/BpibondBuyModal'
-import MreitBuyModal from './components/MreitBuyModal'
-import MreitDividendCard from './components/MreitDividendCard'
 import AtramBuyModal from './components/AtramBuyModal'
 import AtramDividendCard from './components/AtramDividendCard'
 import PortfolioDashboard from './components/PortfolioDashboard'
@@ -55,7 +51,7 @@ function getCurrentMonthPH() {
 
 export default function App() {
   // ── Tab state ────────────────────────────────────────────────────────────────
-  const [activeTab, setActiveTab] = useState('overview')  // 'overview' | 'alfm' | 'btc' | 'mgpiff' | 'bpibond' | 'mreit' | 'atram' | 'tools'
+  const [activeTab, setActiveTab] = useState('overview')  // 'overview' | 'alfm' | 'btc' | 'bpibond' | 'atram' | 'tools'
 
   // ── ALFM state ───────────────────────────────────────────────────────────────
   const [todaySignal, setTodaySignal] = useState(null)
@@ -71,18 +67,6 @@ export default function App() {
 
   // ── Dividend totals ───────────────────────────────────────────────────────────
   const [alfmDividends, setAlfmDividends] = useState([])
-  const [mgpiffDividends, setMgpiffDividends] = useState([])
-
-  // ── MGPIFF state ─────────────────────────────────────────────────────────────
-  const [mgpiffSignal, setMgpiffSignal] = useState(null)
-  const [mgpiffPosition, setMgpiffPosition] = useState(null)
-  const [mgpiffNavHistory, setMgpiffNavHistory] = useState([])
-  const [mgpiffBuys, setMgpiffBuys] = useState([])
-  const [mgpiffThresholds, setMgpiffThresholds] = useState(null)
-  const [mgpiffMonthlyBuyCount, setMgpiffMonthlyBuyCount] = useState(0)
-  const [mgpiffDividendBuyDone, setMgpiffDividendBuyDone] = useState(false)
-  const [showMgpiffBuyModal, setShowMgpiffBuyModal] = useState(false)
-  const [mgpiffLoading, setMgpiffLoading] = useState(true)
 
   // ── BPI Bond state ────────────────────────────────────────────────────────────
   const [bpibondSignal, setBpibondSignal] = useState(null)
@@ -96,18 +80,6 @@ export default function App() {
   const [showBpibondBuyModal, setShowBpibondBuyModal] = useState(false)
   const [bpibondLoading, setBpibondLoading] = useState(true)
   const [bpibondDividends, setBpibondDividends] = useState([])
-
-  // ── MREIT state ──────────────────────────────────────────────────────────────
-  const [mreitSignal, setMreitSignal] = useState(null)
-  const [mreitPosition, setMreitPosition] = useState(null)
-  const [mreitNavHistory, setMreitNavHistory] = useState([])
-  const [mreitBuys, setMreitBuys] = useState([])
-  const [mreitThresholds, setMreitThresholds] = useState(null)
-  const [mreitMonthlyBuyCount, setMreitMonthlyBuyCount] = useState(0)
-  const [mreitDividendBuyDone, setMreitDividendBuyDone] = useState(false)
-  const [showMreitBuyModal, setShowMreitBuyModal] = useState(false)
-  const [mreitLoading, setMreitLoading] = useState(true)
-  const [mreitDividends, setMreitDividends] = useState([])
 
   // ── ATRAM Nasdaq state ───────────────────────────────────────────────────────
   const [atramSignal, setAtramSignal] = useState(null)
@@ -267,71 +239,11 @@ export default function App() {
     return () => unsub()
   }, [])
 
-  // ── MGPIFF listeners ──────────────────────────────────────────────────────────
-
-  useEffect(() => {
-    const unsub = onSnapshot(doc(db, 'mgpiff_signals', todayStr), (snap) => {
-      setMgpiffSignal(snap.exists() ? { id: snap.id, ...snap.data() } : null)
-      setMgpiffLoading(false)
-    }, () => setMgpiffLoading(false))
-    return () => unsub()
-  }, [todayStr])
-
-  useEffect(() => {
-    const unsub = onSnapshot(doc(db, 'mgpiff_position', 'current'), (snap) => {
-      setMgpiffPosition(snap.exists() ? snap.data() : null)
-    })
-    return () => unsub()
-  }, [])
-
-  useEffect(() => {
-    const q = query(collection(db, 'mgpiff_navpu_history'), orderBy('date', 'asc'))
-    const unsub = onSnapshot(q, (snap) => {
-      setMgpiffNavHistory(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
-    })
-    return () => unsub()
-  }, [])
-
-  useEffect(() => {
-    const q = query(collection(db, 'mgpiff_buys'), orderBy('createdAt', 'desc'))
-    const unsub = onSnapshot(q, (snap) => {
-      const data = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
-      setMgpiffBuys(data)
-      const thisMonth = data.filter((b) => b.monthYear === currentMonthStr)
-      const oppBuys = thisMonth.filter((b) => !b.isDividendBuy && b.bucket !== 'extreme_override')
-      const staggerSeen = new Set()
-      let oppCount = 0
-      for (const buy of oppBuys) {
-        if (buy.staggerEventDate) {
-          if (!staggerSeen.has(buy.staggerEventDate)) { staggerSeen.add(buy.staggerEventDate); oppCount++ }
-        } else { oppCount++ }
-      }
-      setMgpiffMonthlyBuyCount(oppCount)
-      setMgpiffDividendBuyDone(thisMonth.some((b) => b.isDividendBuy === true))
-    })
-    return () => unsub()
-  }, [currentMonthStr])
-
-  useEffect(() => {
-    const unsub = onSnapshot(doc(db, 'mgpiff_config', 'thresholds'), (snap) => {
-      if (snap.exists()) setMgpiffThresholds(snap.data())
-    })
-    return () => unsub()
-  }, [])
-
   // ── Dividend listeners ────────────────────────────────────────────────────────
   useEffect(() => {
     const q = query(collection(db, 'dividends'), orderBy('date', 'asc'))
     const unsub = onSnapshot(q, (snap) => {
       setAlfmDividends(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
-    })
-    return () => unsub()
-  }, [])
-
-  useEffect(() => {
-    const q = query(collection(db, 'mgpiff_dividends'), orderBy('date', 'asc'))
-    const unsub = onSnapshot(q, (snap) => {
-      setMgpiffDividends(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
     })
     return () => unsub()
   }, [])
@@ -393,66 +305,6 @@ export default function App() {
     const q = query(collection(db, 'bpibond_dividends'), orderBy('date', 'asc'))
     const unsub = onSnapshot(q, (snap) => {
       setBpibondDividends(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
-    })
-    return () => unsub()
-  }, [])
-
-  // ── MREIT listeners ──────────────────────────────────────────────────────────
-
-  useEffect(() => {
-    const unsub = onSnapshot(doc(db, 'mreit_signals', todayStr), (snap) => {
-      setMreitSignal(snap.exists() ? { id: snap.id, ...snap.data() } : null)
-      setMreitLoading(false)
-    }, () => setMreitLoading(false))
-    return () => unsub()
-  }, [todayStr])
-
-  useEffect(() => {
-    const unsub = onSnapshot(doc(db, 'mreit_position', 'current'), (snap) => {
-      setMreitPosition(snap.exists() ? snap.data() : null)
-    })
-    return () => unsub()
-  }, [])
-
-  useEffect(() => {
-    const q = query(collection(db, 'mreit_navpu_history'), orderBy('date', 'asc'))
-    const unsub = onSnapshot(q, (snap) => {
-      setMreitNavHistory(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
-    })
-    return () => unsub()
-  }, [])
-
-  useEffect(() => {
-    const q = query(collection(db, 'mreit_buys'), orderBy('createdAt', 'desc'))
-    const unsub = onSnapshot(q, (snap) => {
-      const data = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
-      setMreitBuys(data)
-      const thisMonth = data.filter((b) => b.monthYear === currentMonthStr)
-      const oppBuys = thisMonth.filter((b) => !b.isDividendBuy && b.bucket !== 'extreme_override')
-      const staggerSeen = new Set()
-      let oppCount = 0
-      for (const buy of oppBuys) {
-        if (buy.staggerEventDate) {
-          if (!staggerSeen.has(buy.staggerEventDate)) { staggerSeen.add(buy.staggerEventDate); oppCount++ }
-        } else { oppCount++ }
-      }
-      setMreitMonthlyBuyCount(oppCount)
-      setMreitDividendBuyDone(thisMonth.some((b) => b.isDividendBuy === true))
-    })
-    return () => unsub()
-  }, [currentMonthStr])
-
-  useEffect(() => {
-    const unsub = onSnapshot(doc(db, 'mreit_config', 'thresholds'), (snap) => {
-      if (snap.exists()) setMreitThresholds(snap.data())
-    })
-    return () => unsub()
-  }, [])
-
-  useEffect(() => {
-    const q = query(collection(db, 'mreit_dividends'), orderBy('date', 'asc'))
-    const unsub = onSnapshot(q, (snap) => {
-      setMreitDividends(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
     })
     return () => unsub()
   }, [])
@@ -567,9 +419,7 @@ export default function App() {
             {[
               { key: 'overview', label: 'Overview', color: 'neutral', fullName: null },
               { key: 'alfm', label: 'ALFMGMP', color: 'emerald', signal: todaySignal?.isActionable, fullName: 'ALFM Global Multi-Asset Income Fund' },
-              { key: 'mgpiff', label: 'MGPIFF', color: 'blue', signal: mgpiffSignal?.isActionable, fullName: 'Manulife Global Preferred Income Fund Feeder Fund' },
               { key: 'bpibond', label: 'BPIGBIF', color: 'violet', signal: bpibondSignal?.isActionable, fullName: 'BPI Global Bond Income Fund Class P (PHP Class)' },
-              { key: 'mreit', label: 'MREIT', color: 'amber', signal: mreitSignal?.isActionable, fullName: 'Manulife Global REIT Feeder Fund PhP-Unhedged' },
               { key: 'atram', label: 'ATRAM', color: 'cyan', signal: atramSignal?.isActionable, fullName: 'ATRAM Nasdaq Equity Income Feeder Fund' },
               { key: 'btc', label: 'BTC', color: 'orange', signal: btcSignal?.isActionable, fullName: 'Bitcoin' },
             ].map(({ key, label, color, signal, fullName }) => (
@@ -597,9 +447,7 @@ export default function App() {
       {activeTab !== 'overview' && (() => {
         const FUND_NAMES = {
           alfm: 'ALFM Global Multi-Asset Income Fund',
-          mgpiff: 'Manulife Global Preferred Income Fund Feeder Fund',
           bpibond: 'BPI Global Bond Income Fund Class P (PHP Class)',
-          mreit: 'Manulife Global REIT Feeder Fund PhP-Unhedged',
           atram: 'ATRAM Nasdaq Equity Income Feeder Fund',
           btc: 'Bitcoin',
         }
@@ -616,12 +464,8 @@ export default function App() {
           <PortfolioDashboard
             alfmPosition={position}
             alfmNavpu={todayNavpu}
-            mgpiffPosition={mgpiffPosition}
-            mgpiffNavpu={mgpiffNavHistory.length > 0 ? mgpiffNavHistory.filter(n => n.navpu != null).at(-1)?.navpu : null}
             bpibondPosition={bpibondPosition}
             bpibondNavpu={bpibondNavHistory.length > 0 ? bpibondNavHistory.filter(n => n.navpu != null).at(-1)?.navpu : null}
-            mreitPosition={mreitPosition}
-            mreitNavpu={mreitNavHistory.length > 0 ? mreitNavHistory.filter(n => n.navpu != null).at(-1)?.navpu : null}
             atramPosition={atramPosition}
             atramNavpu={atramNavHistory.length > 0 ? atramNavHistory.filter(n => n.navpu != null).at(-1)?.navpu : null}
             btcPosition={btcPosition}
@@ -629,14 +473,10 @@ export default function App() {
             btcSignal={btcSignal}
             btcPhpPerUsd={btcSignal?.phpPerUsd ?? 57.5}
             todaySignal={todaySignal}
-            mgpiffSignal={mgpiffSignal}
             bpibondSignal={bpibondSignal}
-            mreitSignal={mreitSignal}
             atramSignal={atramSignal}
             alfmDividends={alfmDividends}
-            mgpiffDividends={mgpiffDividends}
             bpibondDividends={bpibondDividends}
-            mreitDividends={mreitDividends}
             atramDividends={atramDividends}
             onNavigate={setActiveTab}
           />
@@ -719,56 +559,6 @@ export default function App() {
         </main>
       )}
 
-      {/* ── MGPIFF Tab ────────────────────────────────────────────────────────── */}
-      {activeTab === 'mgpiff' && (
-        <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
-          {mgpiffLoading ? (
-            <div className="flex items-center justify-center py-16">
-              <p className="text-slate-400 animate-pulse">Loading MGPIFF signals...</p>
-            </div>
-          ) : (
-            <>
-              <SignalCard
-                signal={mgpiffSignal}
-                todayNavpu={mgpiffNavHistory.length > 0 ? mgpiffNavHistory[mgpiffNavHistory.length - 1]?.navpu : null}
-                dailyChange={mgpiffSignal?.dailyChange ?? null}
-              />
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <PositionCard
-                  position={mgpiffPosition}
-                  todayNavpu={mgpiffNavHistory.length > 0 ? mgpiffNavHistory[mgpiffNavHistory.length - 1]?.navpu : null}
-                  monthlyBuyCount={mgpiffMonthlyBuyCount}
-                  dividendBuyDone={mgpiffDividendBuyDone}
-                />
-                <NavpuCard
-                  todayNavpu={mgpiffNavHistory.length > 0 ? mgpiffNavHistory[mgpiffNavHistory.length - 1]?.navpu : null}
-                  navDate={mgpiffNavHistory.length > 0 ? mgpiffNavHistory[mgpiffNavHistory.length - 1]?.date : null}
-                  dailyChange={mgpiffSignal?.dailyChange ?? null}
-                  navHigh={mgpiffNavHistory.length > 0 ? Math.max(...mgpiffNavHistory.slice(-90).map(n => n.navpu).filter(Boolean)) : null}
-                  navLow={mgpiffNavHistory.length > 0 ? Math.min(...mgpiffNavHistory.slice(-90).map(n => n.navpu).filter(Boolean)) : null}
-                  navMean={mgpiffNavHistory.length > 0 ? parseFloat((mgpiffNavHistory.slice(-90).map(n => n.navpu).filter(Boolean).reduce((a, b) => a + b, 0) / mgpiffNavHistory.slice(-90).filter(n => n.navpu).length).toFixed(4)) : null}
-                  thresholds={mgpiffThresholds}
-                />
-                <MgpiffDividendCard
-                  todayStr={todayStr}
-                  buys={mgpiffBuys}
-                  currentNavpu={mgpiffNavHistory.length > 0 ? mgpiffNavHistory[mgpiffNavHistory.length - 1]?.navpu : null}
-                />
-              </div>
-              <NavChart navHistory={mgpiffNavHistory.slice(-90)} buys={mgpiffBuys} />
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <BuyLog buys={mgpiffBuys} fund="mgpiff" />
-                <BacktestCard
-                  summaryCollection="mgpiff_config"
-                  summaryDoc="backtest_summary"
-                  resultsCollection="mgpiff_backtest_results"
-                />
-              </div>
-            </>
-          )}
-        </main>
-      )}
-
       {/* ── BPI Bond Tab ─────────────────────────────────────────────────────── */}
       {activeTab === 'bpibond' && (
         <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
@@ -812,56 +602,6 @@ export default function App() {
                   summaryCollection="bpibond_config"
                   summaryDoc="backtest_summary"
                   resultsCollection="bpibond_backtest_results"
-                />
-              </div>
-            </>
-          )}
-        </main>
-      )}
-
-      {/* ── MREIT Tab ────────────────────────────────────────────────────────── */}
-      {activeTab === 'mreit' && (
-        <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
-          {mreitLoading ? (
-            <div className="flex items-center justify-center py-16">
-              <p className="text-slate-400 animate-pulse">Loading MREIT signals...</p>
-            </div>
-          ) : (
-            <>
-              <SignalCard
-                signal={mreitSignal}
-                todayNavpu={mreitNavHistory.length > 0 ? mreitNavHistory[mreitNavHistory.length - 1]?.navpu : null}
-                dailyChange={mreitSignal?.dailyChange ?? null}
-              />
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <PositionCard
-                  position={mreitPosition}
-                  todayNavpu={mreitNavHistory.length > 0 ? mreitNavHistory[mreitNavHistory.length - 1]?.navpu : null}
-                  monthlyBuyCount={mreitMonthlyBuyCount}
-                  dividendBuyDone={mreitDividendBuyDone}
-                />
-                <NavpuCard
-                  todayNavpu={mreitNavHistory.length > 0 ? mreitNavHistory[mreitNavHistory.length - 1]?.navpu : null}
-                  navDate={mreitNavHistory.length > 0 ? mreitNavHistory[mreitNavHistory.length - 1]?.date : null}
-                  dailyChange={mreitSignal?.dailyChange ?? null}
-                  navHigh={mreitNavHistory.length > 0 ? Math.max(...mreitNavHistory.slice(-90).map(n => n.navpu).filter(Boolean)) : null}
-                  navLow={mreitNavHistory.length > 0 ? Math.min(...mreitNavHistory.slice(-90).map(n => n.navpu).filter(Boolean)) : null}
-                  navMean={mreitNavHistory.length > 0 ? parseFloat((mreitNavHistory.slice(-90).map(n => n.navpu).filter(Boolean).reduce((a, b) => a + b, 0) / mreitNavHistory.slice(-90).filter(n => n.navpu).length).toFixed(4)) : null}
-                  thresholds={mreitThresholds}
-                />
-                <MreitDividendCard
-                  todayStr={todayStr}
-                  buys={mreitBuys}
-                  currentNavpu={mreitNavHistory.length > 0 ? mreitNavHistory[mreitNavHistory.length - 1]?.navpu : null}
-                />
-              </div>
-              <NavChart navHistory={mreitNavHistory.slice(-90)} buys={mreitBuys} />
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <BuyLog buys={mreitBuys} fund="mreit" />
-                <BacktestCard
-                  summaryCollection="mreit_config"
-                  summaryDoc="backtest_summary"
-                  resultsCollection="mreit_backtest_results"
                 />
               </div>
             </>
@@ -952,37 +692,11 @@ export default function App() {
         </div>
       )}
 
-      {/* Floating Buy Button — MGPIFF tab */}
-      {activeTab === 'mgpiff' && (
-        <button
-          onClick={() => setShowMgpiffBuyModal(true)}
-          className="fixed bottom-6 right-6 bg-blue-600 hover:bg-blue-500 text-white font-medium px-5 py-3 rounded-lg transition-colors flex items-center gap-2 z-40"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-            <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
-          </svg>
-          I Bought
-        </button>
-      )}
-
       {/* Floating Buy Button — BPI Bond tab */}
       {activeTab === 'bpibond' && (
         <button
           onClick={() => setShowBpibondBuyModal(true)}
           className="fixed bottom-6 right-6 bg-violet-600 hover:bg-violet-500 text-white font-medium px-5 py-3 rounded-lg transition-colors flex items-center gap-2 z-40"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-            <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
-          </svg>
-          I Bought
-        </button>
-      )}
-
-      {/* Floating Buy Button — MREIT tab */}
-      {activeTab === 'mreit' && (
-        <button
-          onClick={() => setShowMreitBuyModal(true)}
-          className="fixed bottom-6 right-6 bg-amber-600 hover:bg-amber-500 text-white font-medium px-5 py-3 rounded-lg transition-colors flex items-center gap-2 z-40"
         >
           <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
             <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
@@ -1035,18 +749,6 @@ export default function App() {
         />
       )}
 
-      {/* MGPIFF Buy Modal */}
-      {showMgpiffBuyModal && (
-        <MgpiffBuyModal
-          onClose={() => setShowMgpiffBuyModal(false)}
-          todaySignal={mgpiffSignal}
-          todayNavpu={mgpiffNavHistory.length > 0 ? mgpiffNavHistory[mgpiffNavHistory.length - 1]?.navpu : null}
-          position={mgpiffPosition}
-          todayStr={todayStr}
-          currentMonthStr={currentMonthStr}
-        />
-      )}
-
       {/* BPI Bond Buy Modal */}
       {showBpibondBuyModal && (
         <BpibondBuyModal
@@ -1054,18 +756,6 @@ export default function App() {
           todaySignal={bpibondSignal}
           todayNavpu={bpibondNavHistory.length > 0 ? bpibondNavHistory[bpibondNavHistory.length - 1]?.navpu : null}
           position={bpibondPosition}
-          todayStr={todayStr}
-          currentMonthStr={currentMonthStr}
-        />
-      )}
-
-      {/* MREIT Buy Modal */}
-      {showMreitBuyModal && (
-        <MreitBuyModal
-          onClose={() => setShowMreitBuyModal(false)}
-          todaySignal={mreitSignal}
-          todayNavpu={mreitNavHistory.length > 0 ? mreitNavHistory[mreitNavHistory.length - 1]?.navpu : null}
-          position={mreitPosition}
           todayStr={todayStr}
           currentMonthStr={currentMonthStr}
         />
